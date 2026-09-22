@@ -62,20 +62,32 @@ final class AppModel {
         return providers.first { $0.id == selectedSession.providerID }
     }
 
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var filteredProjects: [Project] {
-        guard !searchText.isEmpty else { return projects }
+        let query = normalizedSearchText
+        guard !query.isEmpty else { return projects }
         return projects.filter { project in
-            project.name.localizedCaseInsensitiveContains(searchText)
-                || (project.rootPath?.localizedCaseInsensitiveContains(searchText) ?? false)
+            projectMatchesSearch(project, query: query)
                 || sessions.contains {
-                    $0.projectID == project.id
-                        && ($0.title ?? "New session").localizedCaseInsensitiveContains(searchText)
+                    $0.projectID == project.id && sessionMatchesSearch($0, query: query)
                 }
         }
     }
 
     func sessions(for project: Project) -> [SessionRecord] {
         sessions.filter { $0.projectID == project.id }
+    }
+
+    func filteredSessions(for project: Project) -> [SessionRecord] {
+        let query = normalizedSearchText
+        let projectSessions = sessions(for: project)
+        guard !query.isEmpty, !projectMatchesSearch(project, query: query) else {
+            return projectSessions
+        }
+        return projectSessions.filter { sessionMatchesSearch($0, query: query) }
     }
 
     func load() {
@@ -128,9 +140,7 @@ final class AppModel {
     func select(session: SessionRecord) {
         selectedProjectID = session.projectID
         selectedSessionID = session.id
-        liveText = ""
-        liveThinking = ""
-        liveTools = []
+        resetLiveState()
         do {
             let store = try requireStore()
             messages = try store.loadMessages(for: session.id)
@@ -190,6 +200,10 @@ final class AppModel {
     }
 
     func attachImage(url: URL) {
+        let isSecurityScoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if isSecurityScoped { url.stopAccessingSecurityScopedResource() }
+        }
         do {
             let data = try Data(contentsOf: url)
             let mediaType: String
@@ -216,14 +230,21 @@ final class AppModel {
               let provider = providers.first(where: { $0.id == record.providerID }) else { return }
         let attachments = pendingAttachments
         pendingAttachments = []
-        liveText = ""
-        liveThinking = ""
-        liveTools = []
+        resetLiveState()
         isRunning = true
         workingSince = Date()
         errorMessage = nil
 
-        streamTask = Task {
+        streamTask?.cancel()
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            var didStartTurn = false
+            defer {
+                isRunning = false
+                workingSince = nil
+                activeSession = nil
+                streamTask = nil
+            }
             do {
                 let session = try AgentSession(
                     record: record,
@@ -237,6 +258,7 @@ final class AppModel {
                 activeSession = session
                 try await session.loadPersistedTranscript()
                 let stream = try await session.send(prompt, attachments: attachments)
+                didStartTurn = true
                 for try await event in stream {
                     apply(event)
                 }
@@ -245,10 +267,10 @@ final class AppModel {
                 messages = try store.loadMessages(for: updated.id)
             } catch {
                 errorMessage = error.localizedDescription
+                if !didStartTurn {
+                    pendingAttachments.insert(contentsOf: attachments, at: 0)
+                }
             }
-            isRunning = false
-            workingSince = nil
-            activeSession = nil
         }
     }
 
@@ -319,6 +341,21 @@ final class AppModel {
             sessions.insert(session, at: 0)
         }
         sessions.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func projectMatchesSearch(_ project: Project, query: String) -> Bool {
+        project.name.localizedCaseInsensitiveContains(query)
+            || (project.rootPath?.localizedCaseInsensitiveContains(query) ?? false)
+    }
+
+    private func sessionMatchesSearch(_ session: SessionRecord, query: String) -> Bool {
+        (session.title ?? "New session").localizedCaseInsensitiveContains(query)
+    }
+
+    private func resetLiveState() {
+        liveText = ""
+        liveThinking = ""
+        liveTools = []
     }
 
     private func requireStore() throws -> JSONDiskStore {
