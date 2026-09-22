@@ -36,6 +36,9 @@ public protocol PersistenceStore: Sendable {
     /// The session transcript in order. Torn trailing lines (crash during
     /// append) are skipped rather than failing the read.
     func loadMessages(for session: SessionID) throws -> [Message]
+    /// Atomically replaces a transcript, used when importing provider-owned
+    /// history discovered outside Skynet.
+    func replaceMessages(_ messages: [Message], for session: SessionID) throws
 
     // MARK: Relay pairing
 
@@ -204,6 +207,11 @@ public struct JSONDiskStore: PersistenceStore {
             messages.append(message)
         }
         return messages
+    }
+
+    public func replaceMessages(_ messages: [Message], for session: SessionID) throws {
+        let lines = try messages.map { try JSONFileIO.encoder.encode(StoreEnvelope.wrap($0)) }
+        try JSONFileIO.writeLines(lines, to: transcriptURL(session))
     }
 
     // MARK: Pairing

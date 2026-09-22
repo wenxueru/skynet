@@ -53,11 +53,11 @@ struct SessionDetailView: View {
             ScrollView {
                 LazyVStack(spacing: 18) {
                     ForEach(model.messages) { message in
-                        MessageView(message: message)
+                        TranscriptMessageView(message: message)
                             .id(message.id.description)
                     }
                     if model.isRunning {
-                        LiveResponseView(model: model)
+                        LiveTranscriptResponseView(model: model)
                             .id("live")
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -101,6 +101,11 @@ struct SessionDetailView: View {
                     .buttonStyle(.plain)
                     .help("Jump to latest")
                     .padding(20)
+                }
+            }
+            .overlay {
+                if model.isLoadingTranscript {
+                    ProgressView().controlSize(.small)
                 }
             }
             .background {
@@ -226,108 +231,6 @@ private struct BottomPositionKey: PreferenceKey {
     }
 }
 
-private struct MessageView: View {
-    let message: Message
-
-    var body: some View {
-        HStack {
-            if message.origin == .user { Spacer(minLength: 100) }
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(message.content.enumerated()), id: \.offset) { _, block in
-                    ContentBlockView(block: block)
-                }
-            }
-            .padding(message.origin == .user ? 14 : 0)
-            .background(message.origin == .user ? Color.accentColor.opacity(0.18) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            if message.origin != .user { Spacer(minLength: 100) }
-        }
-    }
-}
-
-private struct ContentBlockView: View {
-    let block: ContentBlock
-    @State private var expanded = false
-
-    var body: some View {
-        switch block {
-        case .text(let text):
-            VStack(alignment: .leading) {
-                Text(expanded || text.count < 2200 ? text : String(text.prefix(1200)) + "…")
-                    .textSelection(.enabled)
-                if text.count >= 2200 {
-                    Button(expanded ? "Show less" : "Show more") { expanded.toggle() }
-                        .buttonStyle(.link)
-                }
-            }
-        case .thinking(let text, _):
-            DisclosureGroup("Reasoning") { Text(text).textSelection(.enabled) }
-                .foregroundStyle(.secondary)
-        case .image(let attachment):
-            if case .inline(let data, _) = attachment.payload, let image = NSImage(data: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 360)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-        case .toolCall(let call):
-            DisclosureGroup("Tool: \(call.name)") {
-                Text(pretty(call.input)).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            }
-            .padding(10)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        case .toolResult(_, let content, let isError):
-            DisclosureGroup(isError ? "Tool failed" : "Tool result") {
-                Text(content).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            }
-        }
-    }
-}
-
-private struct LiveResponseView: View {
-    @Bindable var model: AppModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let seconds = Int(context.date.timeIntervalSince(model.workingSince ?? context.date))
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Working for \(max(0, seconds))s")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if !model.liveThinking.isEmpty {
-                DisclosureGroup("Reasoning") { Text(model.liveThinking).textSelection(.enabled) }
-            }
-            if !model.liveText.isEmpty { Text(model.liveText).textSelection(.enabled) }
-            ForEach(model.liveTools) { tool in
-                DisclosureGroup(toolTitle(tool)) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Input") {
-                            Text(pretty(tool.input))
-                        }
-                        if let output = tool.output {
-                            LabeledContent(tool.isError ? "Error" : "Output") {
-                                Text(output)
-                            }
-                        }
-                    }
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func toolTitle(_ tool: AppModel.LiveTool) -> String {
-        if tool.output == nil { return "Running \(tool.name)" }
-        return tool.isError ? "Failed \(tool.name)" : tool.name
-    }
-}
-
 private struct AttachmentThumbnail: View {
     let attachment: ImageAttachment
     let remove: () -> Void
@@ -342,13 +245,4 @@ private struct AttachmentThumbnail: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-}
-
-private func pretty(_ value: JSONValue) -> String {
-    guard let data = try? JSONEncoder().encode(value),
-          let object = try? JSONSerialization.jsonObject(with: data),
-          let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else {
-        return String(describing: value)
-    }
-    return String(decoding: pretty, as: UTF8.self)
 }

@@ -93,6 +93,27 @@ enum JSONFileIO {
         }
     }
 
+    /// Atomically replaces a JSONL file with the supplied lines.
+    static func writeLines(_ lines: [Data], to url: URL) throws {
+        var data = Data()
+        for line in lines {
+            data.append(line)
+            if line.last != UInt8(ascii: "\n") {
+                data.append(UInt8(ascii: "\n"))
+            }
+        }
+        do {
+            try ensureDirectory(at: url.deletingLastPathComponent())
+            try data.write(to: url, options: .atomic)
+        } catch let error as SkynetError {
+            throw error
+        } catch {
+            throw SkynetError.persistenceFailure(
+                underlying: "Cannot write \(url.path): \(error.localizedDescription)"
+            )
+        }
+    }
+
     /// Reads a JSONL file as raw line data. Missing files read as empty.
     /// Trailing whitespace and empty lines are dropped.
     static func readLines(from url: URL) throws -> [Data] {

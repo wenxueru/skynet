@@ -12,7 +12,8 @@ struct CodexAdapterTests {
         modelID: ModelID? = nil,
         effort: ReasoningEffort? = nil,
         workingDirectory: String? = nil,
-        attachments: [ImageAttachment] = []
+        attachments: [ImageAttachment] = [],
+        resumeToken: String? = nil
     ) -> AgentTurnRequest {
         AgentTurnRequest(
             sessionID: SessionID(),
@@ -21,7 +22,8 @@ struct CodexAdapterTests {
             attachments: attachments,
             modelID: modelID,
             effort: effort,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            resumeToken: resumeToken
         )
     }
 
@@ -81,6 +83,18 @@ struct CodexAdapterTests {
             interactivePermissions: false
         )
         #expect(allow.contains("--full-auto"))
+    }
+
+    @Test func existingThreadUsesExecResume() throws {
+        let token = "01900000-0000-7000-8000-000000000000"
+        let arguments = try adapter.buildArguments(
+            provider: provider,
+            turn: turn(prompt: "continue", resumeToken: token),
+            permissions: .askEverything,
+            interactivePermissions: false
+        )
+
+        #expect(Array(arguments.suffix(3)) == ["resume", token, "continue"])
     }
 
     @Test func attachmentsAreRejected() {
