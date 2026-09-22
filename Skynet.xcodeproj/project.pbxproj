@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		02501773126D58D690BBA46F /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80FCC824B9D59C2FD006B6B6 /* SessionListView.swift */; };
+		06F6D83CDD03210FD3A6329F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 900761CC2A6A82205C2B8AC4 /* Assets.xcassets */; };
 		07F33B24514764EFB1EC01E6 /* Machine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C3F1EDB52D2E3143E96D32 /* Machine.swift */; };
 		0848BDBE4CE57C908B4A76D3 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9EE3397FA8C035920F2C18 /* SidebarView.swift */; };
 		0A9169DBCAA4CDD20E556AC5 /* AppActivityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B5A7D0488F8234E296514C /* AppActivityState.swift */; };
@@ -51,6 +52,7 @@
 		77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */; };
 		7F807168429E146FB57D99AB /* ToolCallRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A27EC9E598A5F65CDF46AEDE /* ToolCallRow.swift */; };
 		815BBB8C7933D532737771A6 /* ComposerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */; };
+		8770BBB7754DC9817F552BA0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 88099F57EF95077FF3554C47 /* Assets.xcassets */; };
 		877C0AADDB1D16B69D023C96 /* LibraryListContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0827826BA70E1A33E63A9F05 /* LibraryListContent.swift */; };
 		8C7CA18D8A0021D380ED49E4 /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19694BB65989964DCA9F098A /* Project.swift */; };
 		902129C36991CC065020AC75 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF309344463423CCB0B57D87 /* Theme.swift */; };
@@ -159,7 +161,9 @@
 		8467D22EEEF7A061B2CE5B8F /* SessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionViewModel.swift; sourceTree = "<group>"; };
 		8511B46B833457ABB3C37EEE /* SkynetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkynetApp.swift; sourceTree = "<group>"; };
 		87766B38B548D3C6804C8D4F /* QueuedPromptsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuedPromptsModel.swift; sourceTree = "<group>"; };
+		88099F57EF95077FF3554C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsView.swift; sourceTree = "<group>"; };
+		900761CC2A6A82205C2B8AC4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		916A8BC02B984FDF46F82ACB /* ScriptedRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedRelay.swift; sourceTree = "<group>"; };
 		951127200127B3B6F582AAFB /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
 		9628D4D2F19301450ED76934 /* AccessibilityIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityIdentifiers.swift; sourceTree = "<group>"; };
@@ -236,6 +240,7 @@
 		224DB2862F59F8DA51ED4CC9 /* Skynet */ = {
 			isa = PBXGroup;
 			children = (
+				900761CC2A6A82205C2B8AC4 /* Assets.xcassets */,
 				52C8D5C5792AA6C6F8C84216 /* App */,
 				5EE69069CF5B856DF0117593 /* Core */,
 				E2B70AFB78E45CB3ABCF974B /* DesignSystem */,
@@ -426,6 +431,7 @@
 			isa = PBXGroup;
 			children = (
 				18671EDFB791DB653FB2AAAA /* AppModel.swift */,
+				88099F57EF95077FF3554C47 /* Assets.xcassets */,
 				3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */,
 				4EA1FE301C258FDF59489EA9 /* ContentView.swift */,
 				8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */,
@@ -522,6 +528,7 @@
 			buildConfigurationList = C9D342D7E49CD176B052F021 /* Build configuration list for PBXNativeTarget "Skynet" */;
 			buildPhases = (
 				1ECD33A2042A3F5970815AE6 /* Sources */,
+				7F542746943ED975197F3B1B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -539,6 +546,7 @@
 			buildConfigurationList = 69C42D343CC1C3FDBFC24382 /* Build configuration list for PBXNativeTarget "SkynetMac" */;
 			buildPhases = (
 				5E9F83FE679B25800544C281 /* Sources */,
+				4B452C831AAB49536D25A8A4 /* Resources */,
 				75692C1B563ECC2A8EF59497 /* Frameworks */,
 			);
 			buildRules = (
@@ -593,6 +601,25 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4B452C831AAB49536D25A8A4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8770BBB7754DC9817F552BA0 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7F542746943ED975197F3B1B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				06F6D83CDD03210FD3A6329F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1ECD33A2042A3F5970815AE6 /* Sources */ = {

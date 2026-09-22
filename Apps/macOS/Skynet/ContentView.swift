@@ -62,15 +62,14 @@ struct ContentView: View {
             }
             .padding(12)
 
-            List(selection: $model.selectedSessionID) {
+            List(selection: sessionSelection) {
                 Section {
                     DisclosureGroup(isExpanded: .constant(true)) {
                         ForEach(model.filteredProjects) { project in
                             DisclosureGroup {
-                                ForEach(model.sessions(for: project)) { session in
+                                ForEach(model.filteredSessions(for: project)) { session in
                                     SessionSidebarRow(session: session)
                                         .tag(session.id)
-                                        .onTapGesture { model.select(session: session) }
                                 }
                             } label: {
                                 Label(project.name, systemImage: "folder")
@@ -88,6 +87,19 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
         }
+    }
+
+    private var sessionSelection: Binding<SessionID?> {
+        Binding(
+            get: { model.selectedSessionID },
+            set: { id in
+                guard let id,
+                      let session = model.sessions.first(where: { $0.id == id }) else {
+                    return
+                }
+                model.select(session: session)
+            }
+        )
     }
 }
 

@@ -8,6 +8,8 @@ struct SessionDetailView: View {
     @State private var draft = ""
     @State private var title = ""
     @State private var isImageImporterPresented = false
+    @State private var isAtBottom = true
+    @State private var transcriptViewportHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,26 +61,55 @@ struct SessionDetailView: View {
                             .id("live")
                     }
                     Color.clear.frame(height: 1).id("bottom")
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: BottomPositionKey.self,
+                                    value: geometry.frame(in: .named("transcriptScroll")).maxY
+                                )
+                            }
+                        }
                 }
                 .frame(maxWidth: 860)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 24)
                 .frame(maxWidth: .infinity)
             }
+            .coordinateSpace(name: "transcriptScroll")
+            .onPreferenceChange(BottomPositionKey.self) { bottomPosition in
+                isAtBottom = bottomPosition <= transcriptViewportHeight + 24
+            }
             .onChange(of: model.liveText) { _, _ in
-                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                scrollToLatestIfNeeded(using: proxy)
+            }
+            .onChange(of: model.liveThinking) { _, _ in
+                scrollToLatestIfNeeded(using: proxy)
+            }
+            .onChange(of: model.liveTools.count) { _, _ in
+                scrollToLatestIfNeeded(using: proxy)
             }
             .overlay(alignment: .bottomTrailing) {
-                Button {
-                    withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
-                } label: {
-                    Image(systemName: "chevron.down.2")
-                        .font(.title3.weight(.semibold))
-                        .frame(width: 42, height: 42)
-                        .background(.regularMaterial, in: Circle())
+                if !isAtBottom {
+                    Button {
+                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    } label: {
+                        Image(systemName: "chevron.down.2")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: 42, height: 42)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Jump to latest")
+                    .padding(20)
                 }
-                .buttonStyle(.plain)
-                .padding(20)
+            }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.onAppear { transcriptViewportHeight = geometry.size.height }
+                        .onChange(of: geometry.size.height) { _, height in
+                            transcriptViewportHeight = height
+                        }
+                }
             }
         }
     }
@@ -180,6 +211,19 @@ struct SessionDetailView: View {
         draft = ""
         model.send(prompt)
     }
+
+    private func scrollToLatestIfNeeded(using proxy: ScrollViewProxy) {
+        guard isAtBottom else { return }
+        proxy.scrollTo("bottom", anchor: .bottom)
+    }
+}
+
+private struct BottomPositionKey: PreferenceKey {
+    static let defaultValue = CGFloat.infinity
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
 
 private struct MessageView: View {
@@ -259,14 +303,28 @@ private struct LiveResponseView: View {
             }
             if !model.liveText.isEmpty { Text(model.liveText).textSelection(.enabled) }
             ForEach(model.liveTools) { tool in
-                DisclosureGroup(tool.output == nil ? "Running \(tool.name)" : tool.name) {
-                    Text(tool.output ?? pretty(tool.input))
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
+                DisclosureGroup(toolTitle(tool)) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledContent("Input") {
+                            Text(pretty(tool.input))
+                        }
+                        if let output = tool.output {
+                            LabeledContent(tool.isError ? "Error" : "Output") {
+                                Text(output)
+                            }
+                        }
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toolTitle(_ tool: AppModel.LiveTool) -> String {
+        if tool.output == nil { return "Running \(tool.name)" }
+        return tool.isError ? "Failed \(tool.name)" : tool.name
     }
 }
 

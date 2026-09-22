@@ -21,6 +21,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.mac
         PRODUCT_NAME: Skynet
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
   Skynet:
@@ -33,6 +34,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.ios
         PRODUCT_NAME: Skynet
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSCameraUsageDescription: "Skynet uses the camera to scan pairing codes and attach images."
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         SWIFT_VERSION: 5.0

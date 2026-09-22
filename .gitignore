@@ -5,3 +5,5 @@ Packages/.devtools/
 Packages/SkynetCore/.build/
 *.xcuserstate
 xcuserdata/
+history.cmt
+commit.tmp
