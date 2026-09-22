@@ -1,0 +1,8 @@
+# Vendored toolchain (see .devtools/README.md) — gigabytes, never commit.
+.devtools/toolchain/
+.devtools/dl/
+.devtools/sdks/
+.devtools/pkg/
+
+# SwiftPM build artifacts
+.build/

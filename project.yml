@@ -1,0 +1,67 @@
+name: Skynet
+options:
+  bundleIdPrefix: com.skynetresearch
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "18.0"
+packages:
+  SkynetCore:
+    path: Packages/SkynetCore
+targets:
+  SkynetMac:
+    type: application
+    platform: macOS
+    sources:
+      - Apps/macOS/Skynet
+    dependencies:
+      - package: SkynetCore
+        product: SkynetCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.mac
+        PRODUCT_NAME: Skynet
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+  Skynet:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/iOS/Skynet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.ios
+        PRODUCT_NAME: Skynet
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "Skynet uses the camera to scan pairing codes and attach images."
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+  SkynetTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Apps/iOS/Tests
+    dependencies:
+      - target: Skynet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 5.0
+schemes:
+  SkynetMac:
+    build:
+      targets:
+        SkynetMac: all
+    run:
+      config: Debug
+  Skynet:
+    build:
+      targets:
+        Skynet: all
+        SkynetTests: [test]
+    test:
+      targets:
+        - SkynetTests

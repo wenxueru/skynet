@@ -1,0 +1,1003 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02501773126D58D690BBA46F /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80FCC824B9D59C2FD006B6B6 /* SessionListView.swift */; };
+		07F33B24514764EFB1EC01E6 /* Machine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C3F1EDB52D2E3143E96D32 /* Machine.swift */; };
+		0848BDBE4CE57C908B4A76D3 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9EE3397FA8C035920F2C18 /* SidebarView.swift */; };
+		0A9169DBCAA4CDD20E556AC5 /* AppActivityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B5A7D0488F8234E296514C /* AppActivityState.swift */; };
+		0F2D38D5EFC6405311F46176 /* TranscriptRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D48D37B1D952251BE613DF2 /* TranscriptRow.swift */; };
+		10DEA69C20379B13A933BA73 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9E231552E8B83C5E6EEF98 /* TranscriptView.swift */; };
+		1F873CFC28ADDC4F8A522F83 /* AppNotificationScheduling.swift in Sources */ = {isa = PBXBuildFile; fileRef = C208EB985D7FA34CB116244A /* AppNotificationScheduling.swift */; };
+		2094A886355C1FD4BA6DFA54 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C6F9B679573C05BA957ED4B /* PairingView.swift */; };
+		2131D55FC02451996AF8B2D7 /* LibraryViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12230E426AB11CD69B1F18D /* LibraryViewModelTests.swift */; };
+		21A70EEABE46A70A724A4719 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B125ECCDDE12FF1EBAC61A4 /* AppEnvironment.swift */; };
+		23AA39D94F160E88DEE46687 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09A1DA807BA8BFCDDF340788 /* AppRouter.swift */; };
+		2A88E474D7D90AE31F658656 /* PromptPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26288C2DB9BBF6343F235EC7 /* PromptPayload.swift */; };
+		3115EE37E0E8A749C583B0F2 /* PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00024EED10F2C0B8D0D1EEA2 /* PreviewData.swift */; };
+		35659904408AEA71F46D65C7 /* ComposerStateProviding.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB72BC03663515DD88BBB5D /* ComposerStateProviding.swift */; };
+		36EBB825A5AA84BDDBBE93A8 /* TurnActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3172BEA3CECC06E34500395 /* TurnActivity.swift */; };
+		37740308A50091DBA034B07E /* PairedMachineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2635FF29628ED5B645150ED8 /* PairedMachineStore.swift */; };
+		38FA8F77FCEBA8E8F72170EC /* Attachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0DD066593A4853F98CDA8A4 /* Attachment.swift */; };
+		3FD88A56309BFEDDF654355C /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18671EDFB791DB653FB2AAAA /* AppModel.swift */; };
+		40ABDEDB51D1ED386553A05A /* ScriptedPairingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE7D8F04D9949531DE37E65 /* ScriptedPairingService.swift */; };
+		4249900D1E0896F7124AF9F5 /* Identifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D949EB6212802BB74375F9 /* Identifiers.swift */; };
+		429371D69867A60077895157 /* PushRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23C0248FBA2F3FEFCDA50AA7 /* PushRegistration.swift */; };
+		42F5FC88A478EA4F59D5D824 /* PermissionRequestCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE6FA280BA9BD62D89867ED /* PermissionRequestCard.swift */; };
+		44D86DFCFDA6FE34BA886287 /* PairingCodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C72C8D4C7CDAC186372CC5E /* PairingCodeTests.swift */; };
+		45085CEF4E84A79E478AEF59 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51C72B6D0C67E75A49B8630F /* Formatters.swift */; };
+		45D4F4C0814C14FF3EB5DC08 /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00C3539105B250E70A25F23 /* AgentSession.swift */; };
+		477B9006F008FC0FC2C6A0DC /* ComposerViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBBCDABBB956CC6CCC22344 /* ComposerViewModelTests.swift */; };
+		4E7D9893EEF83A10E3A0A214 /* PreviewEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6682E85F3F5EE301DCF58498 /* PreviewEnvironment.swift */; };
+		537FB4BFDA2D53570752B492 /* SessionViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A193532FB270F0D4862F011 /* SessionViewModelTests.swift */; };
+		53D38DEE32AD89856D336779 /* SessionIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 051F2EF0638A8239EF522CF8 /* SessionIndex.swift */; };
+		56D4AC07B285083D9B8E7BCE /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0494B9F28FF7B76A3D8AE52 /* PairingViewModel.swift */; };
+		63DB8B3CA636A38A56FC06E8 /* TranscriptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8152EC730735B090657C36EA /* TranscriptModels.swift */; };
+		65646A4F757EE07864396A84 /* TextComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF49F751FCA317923A08FF4 /* TextComponents.swift */; };
+		68E90A8B3F4638A40CB696B0 /* EmptyStateAndBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474174B614A7598D91C6DD90 /* EmptyStateAndBanner.swift */; };
+		6AE2A02F3B8907ED8147F0CB /* QueuedPromptsBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C4A73C69BE61AFC7663B21 /* QueuedPromptsBar.swift */; };
+		6CEA5E69643D527E608350D3 /* AgentConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38252D95F570F5DC5EE34361 /* AgentConfiguration.swift */; };
+		6F34FE8711F24B0F96AA1B22 /* ConnectionMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4D535C8949607565EE3C553 /* ConnectionMonitorTests.swift */; };
+		6F60B948CCF246690E82F327 /* QueuedPromptsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87766B38B548D3C6804C8D4F /* QueuedPromptsModel.swift */; };
+		6FECF84BF5F5B284D0A9B6DB /* ConnectionBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC61775A6D4DC36D29EDBEC0 /* ConnectionBannerView.swift */; };
+		72022291AE75165730B95CD7 /* TranscriptSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CEA4BAB66D3B7A61BF285C8 /* TranscriptSearchTests.swift */; };
+		764969FD368B049C2AFEAF2B /* SkynetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */; };
+		77AA7B2A8F2C531B5A6F5C0B /* AppGlue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E61B432067F25740311AB4 /* AppGlue.swift */; };
+		77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */; };
+		7F807168429E146FB57D99AB /* ToolCallRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A27EC9E598A5F65CDF46AEDE /* ToolCallRow.swift */; };
+		815BBB8C7933D532737771A6 /* ComposerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */; };
+		877C0AADDB1D16B69D023C96 /* LibraryListContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0827826BA70E1A33E63A9F05 /* LibraryListContent.swift */; };
+		8C7CA18D8A0021D380ED49E4 /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19694BB65989964DCA9F098A /* Project.swift */; };
+		902129C36991CC065020AC75 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF309344463423CCB0B57D87 /* Theme.swift */; };
+		916439373046F2F78AF1C507 /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25269F9DC91A8798B8D18385 /* LibraryViewModel.swift */; };
+		95452013AAE42DECB4B94B99 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9628D4D2F19301450ED76934 /* AccessibilityIdentifiers.swift */; };
+		95B2F486474CB0C523008AAF /* ComposerTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */; };
+		95E0FC9DFE7ADB7741102D93 /* LongMessageText.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6D4115615F7B85D891B6021 /* LongMessageText.swift */; };
+		98AE83EB6429E14C265AD35C /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3719BAEEC5F53DE8F08211DC /* HomeView.swift */; };
+		9A13CB28BCB25F4CD03DF4CA /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F92EDBEEC775C1B61EBCA1EF /* QRScannerView.swift */; };
+		9DBA2405CD7551BD5D1D4DA5 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2235B57099BA6C66E64A4E21 /* RootView.swift */; };
+		A3D2AF6C90412D3C22BCB42E /* LiveActivitySupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B92FD958BADE636337B66D /* LiveActivitySupport.swift */; };
+		A4B299E81F98100C9F0F39EF /* SkynetRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3971CFC8CD7AF41E5D0A322 /* SkynetRelay.swift */; };
+		A5F3E64C36BF037BA7FB8C16 /* QueuedPromptsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E104F54DA203F030873B7946 /* QueuedPromptsModelTests.swift */; };
+		A969F3C8314542F3F1C30C87 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EA1FE301C258FDF59489EA9 /* ContentView.swift */; };
+		AC73B335DA383ACDB1270792 /* SkynetError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C328B2D960E9E3DC3C5F064 /* SkynetError.swift */; };
+		B0212B13071DF2E3566AFCF1 /* UnconfiguredTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1944A0307C490CB68B05509 /* UnconfiguredTransport.swift */; };
+		B232826D32B7620BF398BFF0 /* EventChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B92B954537111FF975C427F3 /* EventChannel.swift */; };
+		B50D9841C830869DEEBF9747 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33AFA14C04AB51E006BB5076 /* ComposerView.swift */; };
+		B5B5AD9C4B18A7FD53752FEE /* AttachmentStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA5B83DDFF92CACB3365BB7 /* AttachmentStripView.swift */; };
+		B7348D0CA8C8D1A157C45F4E /* SkynetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 09E8621BCB6D64D97F8D24E6 /* SkynetCore */; };
+		BD5C27E84426A4BF7FC7AF40 /* PairingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B78B483D5746A3D7DF0D5DAF /* PairingService.swift */; };
+		C1203DA30576E00F45135CC0 /* SkynetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8511B46B833457ABB3C37EEE /* SkynetApp.swift */; };
+		C44B7A1CAF24F183D297D611 /* SessionListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47F695C834140F884866E735 /* SessionListViewModelTests.swift */; };
+		C4FC94E682D10C43FDF84BE3 /* BadgeAndStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC01DDE3E14ABD4DC049EA2A /* BadgeAndStatus.swift */; };
+		C8B9EEB024DCFF6E6A480890 /* ImagePickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8A62DCE0924627B28D518E1 /* ImagePickers.swift */; };
+		C9D03E0B69DDC4388A420780 /* SessionSettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 536AECABC44B961DFA9BB1A5 /* SessionSettingsSheet.swift */; };
+		CC1E147DD014700873935495 /* ScriptedRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916A8BC02B984FDF46F82ACB /* ScriptedRelay.swift */; };
+		CF35ECC530B60BD1827FC92E /* ReconnectPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ECD992E4B5A0E8F0F4122AE /* ReconnectPolicy.swift */; };
+		D13A7B922904528CED62317D /* SessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8467D22EEEF7A061B2CE5B8F /* SessionViewModel.swift */; };
+		D2D96403F74C4E21AF9D0248 /* QueuedPromptsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A3D58A8A7C99263989873C /* QueuedPromptsSheet.swift */; };
+		D3E82D43DEF3F8A4F3C4AC32 /* ProviderSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */; };
+		D4C255A379DF7AE1D4F2AB44 /* TurnNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749B14E3024CC0C3F4A19111 /* TurnNotificationCoordinator.swift */; };
+		D683F5B8F3F2D6F0B08886F6 /* JumpToBottomButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13CEF0350F6D03D442958C9F /* JumpToBottomButton.swift */; };
+		D90ACD8FDBF79B224D0EA2A4 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F9D25E284C705F5087EDB5D /* TestSupport.swift */; };
+		DCC33FD08246015888002B6A /* TranscriptSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C7F79493029A71E00EB7E8 /* TranscriptSearch.swift */; };
+		ED90E38FE8CBEF5E3F448832 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = D29D4A1D17A298181E974ECC /* Log.swift */; };
+		F0253274F5E35BFFE66A0E9B /* SessionListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1043444EC19E1116F0E792B0 /* SessionListViewModel.swift */; };
+		F146FF05193F84D63F8E8653 /* SessionRenameSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8287E94219D07D9FB7A55DA /* SessionRenameSheet.swift */; };
+		F53EB44A50781FA2A2091826 /* ConnectionMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6405B2D26C0218E7BD507FB9 /* ConnectionMonitor.swift */; };
+		F58CC36A23C566276CE66427 /* PairingViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E06D3D3D3960045A4ED87FB /* PairingViewModelTests.swift */; };
+		FE8CB5EA81DAC469B73BAF1A /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 951127200127B3B6F582AAFB /* SessionView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B4C63D9ACF18B2BD424000F2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A4CDBA1A3B6BA250F5D9D94B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 615CABC40B0BF11401645B5A;
+			remoteInfo = Skynet;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00024EED10F2C0B8D0D1EEA2 /* PreviewData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewData.swift; sourceTree = "<group>"; };
+		02B5A7D0488F8234E296514C /* AppActivityState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppActivityState.swift; sourceTree = "<group>"; };
+		051F2EF0638A8239EF522CF8 /* SessionIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIndex.swift; sourceTree = "<group>"; };
+		0827826BA70E1A33E63A9F05 /* LibraryListContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryListContent.swift; sourceTree = "<group>"; };
+		09A1DA807BA8BFCDDF340788 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
+		0C328B2D960E9E3DC3C5F064 /* SkynetError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkynetError.swift; sourceTree = "<group>"; };
+		0D48D37B1D952251BE613DF2 /* TranscriptRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptRow.swift; sourceTree = "<group>"; };
+		0E4625712E55B66C6015390E /* SkynetTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SkynetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1043444EC19E1116F0E792B0 /* SessionListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListViewModel.swift; sourceTree = "<group>"; };
+		13CEF0350F6D03D442958C9F /* JumpToBottomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JumpToBottomButton.swift; sourceTree = "<group>"; };
+		18671EDFB791DB653FB2AAAA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		19694BB65989964DCA9F098A /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
+		1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerViewModel.swift; sourceTree = "<group>"; };
+		2235B57099BA6C66E64A4E21 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		23C0248FBA2F3FEFCDA50AA7 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
+		25269F9DC91A8798B8D18385 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
+		26288C2DB9BBF6343F235EC7 /* PromptPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptPayload.swift; sourceTree = "<group>"; };
+		2635FF29628ED5B645150ED8 /* PairedMachineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedMachineStore.swift; sourceTree = "<group>"; };
+		2C72C8D4C7CDAC186372CC5E /* PairingCodeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingCodeTests.swift; sourceTree = "<group>"; };
+		2FF49F751FCA317923A08FF4 /* TextComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextComponents.swift; sourceTree = "<group>"; };
+		3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerTextView.swift; sourceTree = "<group>"; };
+		33AFA14C04AB51E006BB5076 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		3719BAEEC5F53DE8F08211DC /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		37C3F1EDB52D2E3143E96D32 /* Machine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Machine.swift; sourceTree = "<group>"; };
+		38252D95F570F5DC5EE34361 /* AgentConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConfiguration.swift; sourceTree = "<group>"; };
+		39B92FD958BADE636337B66D /* LiveActivitySupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivitySupport.swift; sourceTree = "<group>"; };
+		3B125ECCDDE12FF1EBAC61A4 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		3F9D25E284C705F5087EDB5D /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		474174B614A7598D91C6DD90 /* EmptyStateAndBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateAndBanner.swift; sourceTree = "<group>"; };
+		47F695C834140F884866E735 /* SessionListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListViewModelTests.swift; sourceTree = "<group>"; };
+		4C6F9B679573C05BA957ED4B /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		4CEA4BAB66D3B7A61BF285C8 /* TranscriptSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptSearchTests.swift; sourceTree = "<group>"; };
+		4EA1FE301C258FDF59489EA9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		51C72B6D0C67E75A49B8630F /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
+		51D949EB6212802BB74375F9 /* Identifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identifiers.swift; sourceTree = "<group>"; };
+		536AECABC44B961DFA9BB1A5 /* SessionSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSettingsSheet.swift; sourceTree = "<group>"; };
+		5CBBCDABBB956CC6CCC22344 /* ComposerViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerViewModelTests.swift; sourceTree = "<group>"; };
+		5DE6FA280BA9BD62D89867ED /* PermissionRequestCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRequestCard.swift; sourceTree = "<group>"; };
+		608FF024BCC3E071C1F6FE7B /* Skynet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Skynet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		63C4A73C69BE61AFC7663B21 /* QueuedPromptsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuedPromptsBar.swift; sourceTree = "<group>"; };
+		6405B2D26C0218E7BD507FB9 /* ConnectionMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionMonitor.swift; sourceTree = "<group>"; };
+		6682E85F3F5EE301DCF58498 /* PreviewEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewEnvironment.swift; sourceTree = "<group>"; };
+		6A193532FB270F0D4862F011 /* SessionViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionViewModelTests.swift; sourceTree = "<group>"; };
+		6E06D3D3D3960045A4ED87FB /* PairingViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModelTests.swift; sourceTree = "<group>"; };
+		72B44CE0D078A077744D936F /* SkynetCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SkynetCore; path = Packages/SkynetCore; sourceTree = SOURCE_ROOT; };
+		749B14E3024CC0C3F4A19111 /* TurnNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnNotificationCoordinator.swift; sourceTree = "<group>"; };
+		76A3D58A8A7C99263989873C /* QueuedPromptsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuedPromptsSheet.swift; sourceTree = "<group>"; };
+		76C7F79493029A71E00EB7E8 /* TranscriptSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptSearch.swift; sourceTree = "<group>"; };
+		7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkynetMacApp.swift; sourceTree = "<group>"; };
+		80FCC824B9D59C2FD006B6B6 /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
+		8152EC730735B090657C36EA /* TranscriptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptModels.swift; sourceTree = "<group>"; };
+		8467D22EEEF7A061B2CE5B8F /* SessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionViewModel.swift; sourceTree = "<group>"; };
+		8511B46B833457ABB3C37EEE /* SkynetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkynetApp.swift; sourceTree = "<group>"; };
+		87766B38B548D3C6804C8D4F /* QueuedPromptsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuedPromptsModel.swift; sourceTree = "<group>"; };
+		8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsView.swift; sourceTree = "<group>"; };
+		916A8BC02B984FDF46F82ACB /* ScriptedRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedRelay.swift; sourceTree = "<group>"; };
+		951127200127B3B6F582AAFB /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
+		9628D4D2F19301450ED76934 /* AccessibilityIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityIdentifiers.swift; sourceTree = "<group>"; };
+		9ECD992E4B5A0E8F0F4122AE /* ReconnectPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReconnectPolicy.swift; sourceTree = "<group>"; };
+		A1944A0307C490CB68B05509 /* UnconfiguredTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnconfiguredTransport.swift; sourceTree = "<group>"; };
+		A27EC9E598A5F65CDF46AEDE /* ToolCallRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallRow.swift; sourceTree = "<group>"; };
+		A3971CFC8CD7AF41E5D0A322 /* SkynetRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkynetRelay.swift; sourceTree = "<group>"; };
+		B3172BEA3CECC06E34500395 /* TurnActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnActivity.swift; sourceTree = "<group>"; };
+		B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
+		B78B483D5746A3D7DF0D5DAF /* PairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingService.swift; sourceTree = "<group>"; };
+		B8287E94219D07D9FB7A55DA /* SessionRenameSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenameSheet.swift; sourceTree = "<group>"; };
+		B92B954537111FF975C427F3 /* EventChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventChannel.swift; sourceTree = "<group>"; };
+		C00C3539105B250E70A25F23 /* AgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSession.swift; sourceTree = "<group>"; };
+		C208EB985D7FA34CB116244A /* AppNotificationScheduling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotificationScheduling.swift; sourceTree = "<group>"; };
+		CAB72BC03663515DD88BBB5D /* ComposerStateProviding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerStateProviding.swift; sourceTree = "<group>"; };
+		CC61775A6D4DC36D29EDBEC0 /* ConnectionBannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionBannerView.swift; sourceTree = "<group>"; };
+		CD9EE3397FA8C035920F2C18 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		D29D4A1D17A298181E974ECC /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
+		DA480DF140AEF1A85178DBE9 /* SkynetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SkynetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DBA5B83DDFF92CACB3365BB7 /* AttachmentStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStripView.swift; sourceTree = "<group>"; };
+		DFE7D8F04D9949531DE37E65 /* ScriptedPairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedPairingService.swift; sourceTree = "<group>"; };
+		E0494B9F28FF7B76A3D8AE52 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
+		E0E61B432067F25740311AB4 /* AppGlue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGlue.swift; sourceTree = "<group>"; };
+		E104F54DA203F030873B7946 /* QueuedPromptsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuedPromptsModelTests.swift; sourceTree = "<group>"; };
+		E12230E426AB11CD69B1F18D /* LibraryViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModelTests.swift; sourceTree = "<group>"; };
+		E6D4115615F7B85D891B6021 /* LongMessageText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LongMessageText.swift; sourceTree = "<group>"; };
+		EB9E231552E8B83C5E6EEF98 /* TranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
+		F0DD066593A4853F98CDA8A4 /* Attachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Attachment.swift; sourceTree = "<group>"; };
+		F4D535C8949607565EE3C553 /* ConnectionMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionMonitorTests.swift; sourceTree = "<group>"; };
+		F8A62DCE0924627B28D518E1 /* ImagePickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickers.swift; sourceTree = "<group>"; };
+		F92EDBEEC775C1B61EBCA1EF /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		FC01DDE3E14ABD4DC049EA2A /* BadgeAndStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgeAndStatus.swift; sourceTree = "<group>"; };
+		FF309344463423CCB0B57D87 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		75692C1B563ECC2A8EF59497 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B7348D0CA8C8D1A157C45F4E /* SkynetCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0D70A6BF33E702EF23E2B003 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				3719BAEEC5F53DE8F08211DC /* HomeView.swift */,
+				0827826BA70E1A33E63A9F05 /* LibraryListContent.swift */,
+				25269F9DC91A8798B8D18385 /* LibraryViewModel.swift */,
+				CD9EE3397FA8C035920F2C18 /* SidebarView.swift */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		1ACFB730ACBE379F151C12CC /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				7A98736EE536D18EAD4909A8 /* Composer */,
+				25007E14CD27B65BD23B4090 /* Connectivity */,
+				0D70A6BF33E702EF23E2B003 /* Library */,
+				36E88FE829F88375A6961CF8 /* Notifications */,
+				976A3EBFEEEED43D7D85C6FF /* Pairing */,
+				9BC8755D59B5C6BF291B9230 /* Search */,
+				FAAEFD18E0DEAF7A13A40D65 /* Session */,
+				F22CE822BF624D6D8E85D1C1 /* SessionList */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		224DB2862F59F8DA51ED4CC9 /* Skynet */ = {
+			isa = PBXGroup;
+			children = (
+				52C8D5C5792AA6C6F8C84216 /* App */,
+				5EE69069CF5B856DF0117593 /* Core */,
+				E2B70AFB78E45CB3ABCF974B /* DesignSystem */,
+				1ACFB730ACBE379F151C12CC /* Features */,
+				6317195BCC3D84600A4774B9 /* PreviewSupport */,
+				9731F99A28CA1392795F57F3 /* Support */,
+			);
+			name = Skynet;
+			path = Apps/iOS/Skynet;
+			sourceTree = "<group>";
+		};
+		25007E14CD27B65BD23B4090 /* Connectivity */ = {
+			isa = PBXGroup;
+			children = (
+				CC61775A6D4DC36D29EDBEC0 /* ConnectionBannerView.swift */,
+				6405B2D26C0218E7BD507FB9 /* ConnectionMonitor.swift */,
+			);
+			path = Connectivity;
+			sourceTree = "<group>";
+		};
+		36E88FE829F88375A6961CF8 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				C208EB985D7FA34CB116244A /* AppNotificationScheduling.swift */,
+				39B92FD958BADE636337B66D /* LiveActivitySupport.swift */,
+				23C0248FBA2F3FEFCDA50AA7 /* PushRegistration.swift */,
+				B3172BEA3CECC06E34500395 /* TurnActivity.swift */,
+				749B14E3024CC0C3F4A19111 /* TurnNotificationCoordinator.swift */,
+			);
+			path = Notifications;
+			sourceTree = "<group>";
+		};
+		502F4B9A17A3ABC730597413 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				5CBBCDABBB956CC6CCC22344 /* ComposerViewModelTests.swift */,
+				F4D535C8949607565EE3C553 /* ConnectionMonitorTests.swift */,
+				E12230E426AB11CD69B1F18D /* LibraryViewModelTests.swift */,
+				2C72C8D4C7CDAC186372CC5E /* PairingCodeTests.swift */,
+				6E06D3D3D3960045A4ED87FB /* PairingViewModelTests.swift */,
+				E104F54DA203F030873B7946 /* QueuedPromptsModelTests.swift */,
+				47F695C834140F884866E735 /* SessionListViewModelTests.swift */,
+				6A193532FB270F0D4862F011 /* SessionViewModelTests.swift */,
+				4CEA4BAB66D3B7A61BF285C8 /* TranscriptSearchTests.swift */,
+				A03195664609D4298A846E37 /* Support */,
+			);
+			name = Tests;
+			path = Apps/iOS/Tests;
+			sourceTree = "<group>";
+		};
+		52C8D5C5792AA6C6F8C84216 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				02B5A7D0488F8234E296514C /* AppActivityState.swift */,
+				3B125ECCDDE12FF1EBAC61A4 /* AppEnvironment.swift */,
+				E0E61B432067F25740311AB4 /* AppGlue.swift */,
+				09A1DA807BA8BFCDDF340788 /* AppRouter.swift */,
+				2235B57099BA6C66E64A4E21 /* RootView.swift */,
+				051F2EF0638A8239EF522CF8 /* SessionIndex.swift */,
+				8511B46B833457ABB3C37EEE /* SkynetApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		57D40BE1E7EDC5466C98ED08 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				608FF024BCC3E071C1F6FE7B /* Skynet.app */,
+				DA480DF140AEF1A85178DBE9 /* SkynetMac.app */,
+				0E4625712E55B66C6015390E /* SkynetTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5EE69069CF5B856DF0117593 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				F8EC39152EDC16B357AF0F34 /* Models */,
+				DE5228A83CBC1643B997CAF1 /* Support */,
+				F1054AC60538D5B759EAC20E /* Transport */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		6317195BCC3D84600A4774B9 /* PreviewSupport */ = {
+			isa = PBXGroup;
+			children = (
+				00024EED10F2C0B8D0D1EEA2 /* PreviewData.swift */,
+				6682E85F3F5EE301DCF58498 /* PreviewEnvironment.swift */,
+				DFE7D8F04D9949531DE37E65 /* ScriptedPairingService.swift */,
+				916A8BC02B984FDF46F82ACB /* ScriptedRelay.swift */,
+			);
+			path = PreviewSupport;
+			sourceTree = "<group>";
+		};
+		66CDEDE861D5D2297B9F5799 = {
+			isa = PBXGroup;
+			children = (
+				8EC7D7853A9B66EB345A6C29 /* Packages */,
+				224DB2862F59F8DA51ED4CC9 /* Skynet */,
+				DE73F3E21A07C57C69836304 /* Skynet */,
+				502F4B9A17A3ABC730597413 /* Tests */,
+				57D40BE1E7EDC5466C98ED08 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7A98736EE536D18EAD4909A8 /* Composer */ = {
+			isa = PBXGroup;
+			children = (
+				DBA5B83DDFF92CACB3365BB7 /* AttachmentStripView.swift */,
+				CAB72BC03663515DD88BBB5D /* ComposerStateProviding.swift */,
+				33AFA14C04AB51E006BB5076 /* ComposerView.swift */,
+				1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */,
+				F8A62DCE0924627B28D518E1 /* ImagePickers.swift */,
+				63C4A73C69BE61AFC7663B21 /* QueuedPromptsBar.swift */,
+				87766B38B548D3C6804C8D4F /* QueuedPromptsModel.swift */,
+				76A3D58A8A7C99263989873C /* QueuedPromptsSheet.swift */,
+				536AECABC44B961DFA9BB1A5 /* SessionSettingsSheet.swift */,
+			);
+			path = Composer;
+			sourceTree = "<group>";
+		};
+		8EC7D7853A9B66EB345A6C29 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				72B44CE0D078A077744D936F /* SkynetCore */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		9731F99A28CA1392795F57F3 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				9628D4D2F19301450ED76934 /* AccessibilityIdentifiers.swift */,
+				51C72B6D0C67E75A49B8630F /* Formatters.swift */,
+				D29D4A1D17A298181E974ECC /* Log.swift */,
+				0C328B2D960E9E3DC3C5F064 /* SkynetError.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		976A3EBFEEEED43D7D85C6FF /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				4C6F9B679573C05BA957ED4B /* PairingView.swift */,
+				E0494B9F28FF7B76A3D8AE52 /* PairingViewModel.swift */,
+				F92EDBEEC775C1B61EBCA1EF /* QRScannerView.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		9BC8755D59B5C6BF291B9230 /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				76C7F79493029A71E00EB7E8 /* TranscriptSearch.swift */,
+			);
+			path = Search;
+			sourceTree = "<group>";
+		};
+		A03195664609D4298A846E37 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				3F9D25E284C705F5087EDB5D /* TestSupport.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		B471D9E684CF70C2154FAB8B /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				FC01DDE3E14ABD4DC049EA2A /* BadgeAndStatus.swift */,
+				474174B614A7598D91C6DD90 /* EmptyStateAndBanner.swift */,
+				2FF49F751FCA317923A08FF4 /* TextComponents.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		DE5228A83CBC1643B997CAF1 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				B92B954537111FF975C427F3 /* EventChannel.swift */,
+				9ECD992E4B5A0E8F0F4122AE /* ReconnectPolicy.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		DE73F3E21A07C57C69836304 /* Skynet */ = {
+			isa = PBXGroup;
+			children = (
+				18671EDFB791DB653FB2AAAA /* AppModel.swift */,
+				3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */,
+				4EA1FE301C258FDF59489EA9 /* ContentView.swift */,
+				8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */,
+				B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */,
+				7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */,
+			);
+			name = Skynet;
+			path = Apps/macOS/Skynet;
+			sourceTree = "<group>";
+		};
+		E2B70AFB78E45CB3ABCF974B /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				FF309344463423CCB0B57D87 /* Theme.swift */,
+				B471D9E684CF70C2154FAB8B /* Components */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		F1054AC60538D5B759EAC20E /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				2635FF29628ED5B645150ED8 /* PairedMachineStore.swift */,
+				B78B483D5746A3D7DF0D5DAF /* PairingService.swift */,
+				A3971CFC8CD7AF41E5D0A322 /* SkynetRelay.swift */,
+				A1944A0307C490CB68B05509 /* UnconfiguredTransport.swift */,
+			);
+			path = Transport;
+			sourceTree = "<group>";
+		};
+		F22CE822BF624D6D8E85D1C1 /* SessionList */ = {
+			isa = PBXGroup;
+			children = (
+				80FCC824B9D59C2FD006B6B6 /* SessionListView.swift */,
+				1043444EC19E1116F0E792B0 /* SessionListViewModel.swift */,
+				B8287E94219D07D9FB7A55DA /* SessionRenameSheet.swift */,
+			);
+			path = SessionList;
+			sourceTree = "<group>";
+		};
+		F8EC39152EDC16B357AF0F34 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				38252D95F570F5DC5EE34361 /* AgentConfiguration.swift */,
+				C00C3539105B250E70A25F23 /* AgentSession.swift */,
+				F0DD066593A4853F98CDA8A4 /* Attachment.swift */,
+				51D949EB6212802BB74375F9 /* Identifiers.swift */,
+				37C3F1EDB52D2E3143E96D32 /* Machine.swift */,
+				19694BB65989964DCA9F098A /* Project.swift */,
+				26288C2DB9BBF6343F235EC7 /* PromptPayload.swift */,
+				8152EC730735B090657C36EA /* TranscriptModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		FAAEFD18E0DEAF7A13A40D65 /* Session */ = {
+			isa = PBXGroup;
+			children = (
+				13CEF0350F6D03D442958C9F /* JumpToBottomButton.swift */,
+				E6D4115615F7B85D891B6021 /* LongMessageText.swift */,
+				5DE6FA280BA9BD62D89867ED /* PermissionRequestCard.swift */,
+				951127200127B3B6F582AAFB /* SessionView.swift */,
+				8467D22EEEF7A061B2CE5B8F /* SessionViewModel.swift */,
+				A27EC9E598A5F65CDF46AEDE /* ToolCallRow.swift */,
+				0D48D37B1D952251BE613DF2 /* TranscriptRow.swift */,
+				EB9E231552E8B83C5E6EEF98 /* TranscriptView.swift */,
+			);
+			path = Session;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		03E91A11E276509AE1F75306 /* SkynetTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2F8623B1D0D5AA49F0BA403B /* Build configuration list for PBXNativeTarget "SkynetTests" */;
+			buildPhases = (
+				61E769574FE35451D75B5971 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				718BD4F42802823EDD7A630E /* PBXTargetDependency */,
+			);
+			name = SkynetTests;
+			packageProductDependencies = (
+			);
+			productName = SkynetTests;
+			productReference = 0E4625712E55B66C6015390E /* SkynetTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		615CABC40B0BF11401645B5A /* Skynet */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C9D342D7E49CD176B052F021 /* Build configuration list for PBXNativeTarget "Skynet" */;
+			buildPhases = (
+				1ECD33A2042A3F5970815AE6 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Skynet;
+			packageProductDependencies = (
+			);
+			productName = Skynet;
+			productReference = 608FF024BCC3E071C1F6FE7B /* Skynet.app */;
+			productType = "com.apple.product-type.application";
+		};
+		88CC786CD1DB290DEB31CA13 /* SkynetMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 69C42D343CC1C3FDBFC24382 /* Build configuration list for PBXNativeTarget "SkynetMac" */;
+			buildPhases = (
+				5E9F83FE679B25800544C281 /* Sources */,
+				75692C1B563ECC2A8EF59497 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SkynetMac;
+			packageProductDependencies = (
+				09E8621BCB6D64D97F8D24E6 /* SkynetCore */,
+			);
+			productName = SkynetMac;
+			productReference = DA480DF140AEF1A85178DBE9 /* SkynetMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A4CDBA1A3B6BA250F5D9D94B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					615CABC40B0BF11401645B5A = {
+						ProvisioningStyle = Automatic;
+					};
+					88CC786CD1DB290DEB31CA13 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 8D7DE6371ADDE6433C5A478C /* Build configuration list for PBXProject "Skynet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 66CDEDE861D5D2297B9F5799;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				80DBA82AFFD5ECF26B754708 /* XCLocalSwiftPackageReference "Packages/SkynetCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 57D40BE1E7EDC5466C98ED08 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				88CC786CD1DB290DEB31CA13 /* SkynetMac */,
+				615CABC40B0BF11401645B5A /* Skynet */,
+				03E91A11E276509AE1F75306 /* SkynetTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1ECD33A2042A3F5970815AE6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				95452013AAE42DECB4B94B99 /* AccessibilityIdentifiers.swift in Sources */,
+				6CEA5E69643D527E608350D3 /* AgentConfiguration.swift in Sources */,
+				45D4F4C0814C14FF3EB5DC08 /* AgentSession.swift in Sources */,
+				0A9169DBCAA4CDD20E556AC5 /* AppActivityState.swift in Sources */,
+				21A70EEABE46A70A724A4719 /* AppEnvironment.swift in Sources */,
+				77AA7B2A8F2C531B5A6F5C0B /* AppGlue.swift in Sources */,
+				1F873CFC28ADDC4F8A522F83 /* AppNotificationScheduling.swift in Sources */,
+				23AA39D94F160E88DEE46687 /* AppRouter.swift in Sources */,
+				38FA8F77FCEBA8E8F72170EC /* Attachment.swift in Sources */,
+				B5B5AD9C4B18A7FD53752FEE /* AttachmentStripView.swift in Sources */,
+				C4FC94E682D10C43FDF84BE3 /* BadgeAndStatus.swift in Sources */,
+				35659904408AEA71F46D65C7 /* ComposerStateProviding.swift in Sources */,
+				B50D9841C830869DEEBF9747 /* ComposerView.swift in Sources */,
+				815BBB8C7933D532737771A6 /* ComposerViewModel.swift in Sources */,
+				6FECF84BF5F5B284D0A9B6DB /* ConnectionBannerView.swift in Sources */,
+				F53EB44A50781FA2A2091826 /* ConnectionMonitor.swift in Sources */,
+				68E90A8B3F4638A40CB696B0 /* EmptyStateAndBanner.swift in Sources */,
+				B232826D32B7620BF398BFF0 /* EventChannel.swift in Sources */,
+				45085CEF4E84A79E478AEF59 /* Formatters.swift in Sources */,
+				98AE83EB6429E14C265AD35C /* HomeView.swift in Sources */,
+				4249900D1E0896F7124AF9F5 /* Identifiers.swift in Sources */,
+				C8B9EEB024DCFF6E6A480890 /* ImagePickers.swift in Sources */,
+				D683F5B8F3F2D6F0B08886F6 /* JumpToBottomButton.swift in Sources */,
+				877C0AADDB1D16B69D023C96 /* LibraryListContent.swift in Sources */,
+				916439373046F2F78AF1C507 /* LibraryViewModel.swift in Sources */,
+				A3D2AF6C90412D3C22BCB42E /* LiveActivitySupport.swift in Sources */,
+				ED90E38FE8CBEF5E3F448832 /* Log.swift in Sources */,
+				95E0FC9DFE7ADB7741102D93 /* LongMessageText.swift in Sources */,
+				07F33B24514764EFB1EC01E6 /* Machine.swift in Sources */,
+				37740308A50091DBA034B07E /* PairedMachineStore.swift in Sources */,
+				BD5C27E84426A4BF7FC7AF40 /* PairingService.swift in Sources */,
+				2094A886355C1FD4BA6DFA54 /* PairingView.swift in Sources */,
+				56D4AC07B285083D9B8E7BCE /* PairingViewModel.swift in Sources */,
+				42F5FC88A478EA4F59D5D824 /* PermissionRequestCard.swift in Sources */,
+				3115EE37E0E8A749C583B0F2 /* PreviewData.swift in Sources */,
+				4E7D9893EEF83A10E3A0A214 /* PreviewEnvironment.swift in Sources */,
+				8C7CA18D8A0021D380ED49E4 /* Project.swift in Sources */,
+				2A88E474D7D90AE31F658656 /* PromptPayload.swift in Sources */,
+				429371D69867A60077895157 /* PushRegistration.swift in Sources */,
+				9A13CB28BCB25F4CD03DF4CA /* QRScannerView.swift in Sources */,
+				6AE2A02F3B8907ED8147F0CB /* QueuedPromptsBar.swift in Sources */,
+				6F60B948CCF246690E82F327 /* QueuedPromptsModel.swift in Sources */,
+				D2D96403F74C4E21AF9D0248 /* QueuedPromptsSheet.swift in Sources */,
+				CF35ECC530B60BD1827FC92E /* ReconnectPolicy.swift in Sources */,
+				9DBA2405CD7551BD5D1D4DA5 /* RootView.swift in Sources */,
+				40ABDEDB51D1ED386553A05A /* ScriptedPairingService.swift in Sources */,
+				CC1E147DD014700873935495 /* ScriptedRelay.swift in Sources */,
+				53D38DEE32AD89856D336779 /* SessionIndex.swift in Sources */,
+				02501773126D58D690BBA46F /* SessionListView.swift in Sources */,
+				F0253274F5E35BFFE66A0E9B /* SessionListViewModel.swift in Sources */,
+				F146FF05193F84D63F8E8653 /* SessionRenameSheet.swift in Sources */,
+				C9D03E0B69DDC4388A420780 /* SessionSettingsSheet.swift in Sources */,
+				FE8CB5EA81DAC469B73BAF1A /* SessionView.swift in Sources */,
+				D13A7B922904528CED62317D /* SessionViewModel.swift in Sources */,
+				0848BDBE4CE57C908B4A76D3 /* SidebarView.swift in Sources */,
+				C1203DA30576E00F45135CC0 /* SkynetApp.swift in Sources */,
+				AC73B335DA383ACDB1270792 /* SkynetError.swift in Sources */,
+				A4B299E81F98100C9F0F39EF /* SkynetRelay.swift in Sources */,
+				65646A4F757EE07864396A84 /* TextComponents.swift in Sources */,
+				902129C36991CC065020AC75 /* Theme.swift in Sources */,
+				7F807168429E146FB57D99AB /* ToolCallRow.swift in Sources */,
+				63DB8B3CA636A38A56FC06E8 /* TranscriptModels.swift in Sources */,
+				0F2D38D5EFC6405311F46176 /* TranscriptRow.swift in Sources */,
+				DCC33FD08246015888002B6A /* TranscriptSearch.swift in Sources */,
+				10DEA69C20379B13A933BA73 /* TranscriptView.swift in Sources */,
+				36EBB825A5AA84BDDBBE93A8 /* TurnActivity.swift in Sources */,
+				D4C255A379DF7AE1D4F2AB44 /* TurnNotificationCoordinator.swift in Sources */,
+				B0212B13071DF2E3566AFCF1 /* UnconfiguredTransport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5E9F83FE679B25800544C281 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3FD88A56309BFEDDF654355C /* AppModel.swift in Sources */,
+				95B2F486474CB0C523008AAF /* ComposerTextView.swift in Sources */,
+				A969F3C8314542F3F1C30C87 /* ContentView.swift in Sources */,
+				D3E82D43DEF3F8A4F3C4AC32 /* ProviderSettingsView.swift in Sources */,
+				77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */,
+				764969FD368B049C2AFEAF2B /* SkynetMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		61E769574FE35451D75B5971 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				477B9006F008FC0FC2C6A0DC /* ComposerViewModelTests.swift in Sources */,
+				6F34FE8711F24B0F96AA1B22 /* ConnectionMonitorTests.swift in Sources */,
+				2131D55FC02451996AF8B2D7 /* LibraryViewModelTests.swift in Sources */,
+				44D86DFCFDA6FE34BA886287 /* PairingCodeTests.swift in Sources */,
+				F58CC36A23C566276CE66427 /* PairingViewModelTests.swift in Sources */,
+				A5F3E64C36BF037BA7FB8C16 /* QueuedPromptsModelTests.swift in Sources */,
+				C44B7A1CAF24F183D297D611 /* SessionListViewModelTests.swift in Sources */,
+				537FB4BFDA2D53570752B492 /* SessionViewModelTests.swift in Sources */,
+				D90ACD8FDBF79B224D0EA2A4 /* TestSupport.swift in Sources */,
+				72022291AE75165730B95CD7 /* TranscriptSearchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		718BD4F42802823EDD7A630E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 615CABC40B0BF11401645B5A /* Skynet */;
+			targetProxy = B4C63D9ACF18B2BD424000F2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		3923CBD4801AF7E37AC08FB6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.ios.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Skynet.app/Skynet";
+			};
+			name = Release;
+		};
+		907ED295218EBFF412E7C741 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B4861809CD5C4FE6C970A514 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.mac;
+				PRODUCT_NAME = Skynet;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D9D1A53DEE061527BEAC587E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.ios.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Skynet.app/Skynet";
+			};
+			name = Debug;
+		};
+		E6D98A53CE1D75B674146FB3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		E8454EF7B62B604D53382A05 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Skynet uses the camera to scan pairing codes and attach images.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.ios;
+				PRODUCT_NAME = Skynet;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EFAC5CEB9DDBCCEF0582A985 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.mac;
+				PRODUCT_NAME = Skynet;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		F74AB21E9C776F0CCCD6E164 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Skynet uses the camera to scan pairing codes and attach images.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skynetresearch.skynet.ios;
+				PRODUCT_NAME = Skynet;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2F8623B1D0D5AA49F0BA403B /* Build configuration list for PBXNativeTarget "SkynetTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D9D1A53DEE061527BEAC587E /* Debug */,
+				3923CBD4801AF7E37AC08FB6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		69C42D343CC1C3FDBFC24382 /* Build configuration list for PBXNativeTarget "SkynetMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B4861809CD5C4FE6C970A514 /* Debug */,
+				EFAC5CEB9DDBCCEF0582A985 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8D7DE6371ADDE6433C5A478C /* Build configuration list for PBXProject "Skynet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				907ED295218EBFF412E7C741 /* Debug */,
+				E6D98A53CE1D75B674146FB3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C9D342D7E49CD176B052F021 /* Build configuration list for PBXNativeTarget "Skynet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E8454EF7B62B604D53382A05 /* Debug */,
+				F74AB21E9C776F0CCCD6E164 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		80DBA82AFFD5ECF26B754708 /* XCLocalSwiftPackageReference "Packages/SkynetCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SkynetCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		09E8621BCB6D64D97F8D24E6 /* SkynetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SkynetCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A4CDBA1A3B6BA250F5D9D94B /* Project object */;
+}
