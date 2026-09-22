@@ -48,6 +48,7 @@
 		6FECF84BF5F5B284D0A9B6DB /* ConnectionBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC61775A6D4DC36D29EDBEC0 /* ConnectionBannerView.swift */; };
 		72022291AE75165730B95CD7 /* TranscriptSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CEA4BAB66D3B7A61BF285C8 /* TranscriptSearchTests.swift */; };
 		764969FD368B049C2AFEAF2B /* SkynetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */; };
+		773FF116C6BC549C9AE3B553 /* TranscriptPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149F4F8648609EC54125F3F4 /* TranscriptPresentation.swift */; };
 		77AA7B2A8F2C531B5A6F5C0B /* AppGlue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E61B432067F25740311AB4 /* AppGlue.swift */; };
 		77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */; };
 		7F807168429E146FB57D99AB /* ToolCallRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A27EC9E598A5F65CDF46AEDE /* ToolCallRow.swift */; };
@@ -56,6 +57,7 @@
 		877C0AADDB1D16B69D023C96 /* LibraryListContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0827826BA70E1A33E63A9F05 /* LibraryListContent.swift */; };
 		8C7CA18D8A0021D380ED49E4 /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19694BB65989964DCA9F098A /* Project.swift */; };
 		902129C36991CC065020AC75 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF309344463423CCB0B57D87 /* Theme.swift */; };
+		90D06887C16F8B7BEBF57040 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = D893EB23624D3E570C336E32 /* AppPreferences.swift */; };
 		916439373046F2F78AF1C507 /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25269F9DC91A8798B8D18385 /* LibraryViewModel.swift */; };
 		95452013AAE42DECB4B94B99 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9628D4D2F19301450ED76934 /* AccessibilityIdentifiers.swift */; };
 		95B2F486474CB0C523008AAF /* ComposerTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */; };
@@ -66,6 +68,7 @@
 		A3D2AF6C90412D3C22BCB42E /* LiveActivitySupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B92FD958BADE636337B66D /* LiveActivitySupport.swift */; };
 		A4B299E81F98100C9F0F39EF /* SkynetRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3971CFC8CD7AF41E5D0A322 /* SkynetRelay.swift */; };
 		A5F3E64C36BF037BA7FB8C16 /* QueuedPromptsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E104F54DA203F030873B7946 /* QueuedPromptsModelTests.swift */; };
+		A91C57A9EC421401CF8B32FB /* MacSessionDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C03F21FFDE31A9221C652001 /* MacSessionDiscovery.swift */; };
 		A969F3C8314542F3F1C30C87 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EA1FE301C258FDF59489EA9 /* ContentView.swift */; };
 		AC73B335DA383ACDB1270792 /* SkynetError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C328B2D960E9E3DC3C5F064 /* SkynetError.swift */; };
 		B0212B13071DF2E3566AFCF1 /* UnconfiguredTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1944A0307C490CB68B05509 /* UnconfiguredTransport.swift */; };
@@ -117,6 +120,7 @@
 		0E4625712E55B66C6015390E /* SkynetTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SkynetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1043444EC19E1116F0E792B0 /* SessionListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListViewModel.swift; sourceTree = "<group>"; };
 		13CEF0350F6D03D442958C9F /* JumpToBottomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JumpToBottomButton.swift; sourceTree = "<group>"; };
+		149F4F8648609EC54125F3F4 /* TranscriptPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptPresentation.swift; sourceTree = "<group>"; };
 		18671EDFB791DB653FB2AAAA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		19694BB65989964DCA9F098A /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerViewModel.swift; sourceTree = "<group>"; };
@@ -177,11 +181,13 @@
 		B8287E94219D07D9FB7A55DA /* SessionRenameSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenameSheet.swift; sourceTree = "<group>"; };
 		B92B954537111FF975C427F3 /* EventChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventChannel.swift; sourceTree = "<group>"; };
 		C00C3539105B250E70A25F23 /* AgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSession.swift; sourceTree = "<group>"; };
+		C03F21FFDE31A9221C652001 /* MacSessionDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionDiscovery.swift; sourceTree = "<group>"; };
 		C208EB985D7FA34CB116244A /* AppNotificationScheduling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotificationScheduling.swift; sourceTree = "<group>"; };
 		CAB72BC03663515DD88BBB5D /* ComposerStateProviding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerStateProviding.swift; sourceTree = "<group>"; };
 		CC61775A6D4DC36D29EDBEC0 /* ConnectionBannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionBannerView.swift; sourceTree = "<group>"; };
 		CD9EE3397FA8C035920F2C18 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		D29D4A1D17A298181E974ECC /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
+		D893EB23624D3E570C336E32 /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
 		DA480DF140AEF1A85178DBE9 /* SkynetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SkynetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBA5B83DDFF92CACB3365BB7 /* AttachmentStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStripView.swift; sourceTree = "<group>"; };
 		DFE7D8F04D9949531DE37E65 /* ScriptedPairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedPairingService.swift; sourceTree = "<group>"; };
@@ -431,12 +437,15 @@
 			isa = PBXGroup;
 			children = (
 				18671EDFB791DB653FB2AAAA /* AppModel.swift */,
+				D893EB23624D3E570C336E32 /* AppPreferences.swift */,
 				88099F57EF95077FF3554C47 /* Assets.xcassets */,
 				3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */,
 				4EA1FE301C258FDF59489EA9 /* ContentView.swift */,
+				C03F21FFDE31A9221C652001 /* MacSessionDiscovery.swift */,
 				8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */,
 				B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */,
 				7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */,
+				149F4F8648609EC54125F3F4 /* TranscriptPresentation.swift */,
 			);
 			name = Skynet;
 			path = Apps/macOS/Skynet;
@@ -702,11 +711,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				3FD88A56309BFEDDF654355C /* AppModel.swift in Sources */,
+				90D06887C16F8B7BEBF57040 /* AppPreferences.swift in Sources */,
 				95B2F486474CB0C523008AAF /* ComposerTextView.swift in Sources */,
 				A969F3C8314542F3F1C30C87 /* ContentView.swift in Sources */,
+				A91C57A9EC421401CF8B32FB /* MacSessionDiscovery.swift in Sources */,
 				D3E82D43DEF3F8A4F3C4AC32 /* ProviderSettingsView.swift in Sources */,
 				77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */,
 				764969FD368B049C2AFEAF2B /* SkynetMacApp.swift in Sources */,
+				773FF116C6BC549C9AE3B553 /* TranscriptPresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

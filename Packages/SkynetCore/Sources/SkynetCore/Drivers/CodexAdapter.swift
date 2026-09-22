@@ -53,6 +53,9 @@ public struct CodexAdapter: ProviderProtocolAdapter {
         case .allow:
             arguments += ["--full-auto"]
         }
+        if let resumeToken = turn.resumeToken {
+            arguments += ["resume", resumeToken]
+        }
         arguments.append(turn.prompt)
         return arguments
     }

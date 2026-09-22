@@ -14,6 +14,11 @@ final class AppModel {
         var isError = false
     }
 
+    private struct TranscriptLoadResult: Sendable {
+        let messages: [Message]
+        let errorMessage: String?
+    }
+
     var projects: [Project] = []
     var sessions: [SessionRecord] = []
     var providers: [AgentProviderDescriptor] = AgentProviderDescriptor.builtIns
@@ -28,10 +33,17 @@ final class AppModel {
     var workingSince: Date?
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
+    var machines: [DiscoveredMachine] = [.local]
+    var machineErrors: [BackendID: String] = [:]
+    var isDiscovering = false
+    var isLoadingTranscript = false
+    private(set) var storageDirectoryURL: URL?
 
     private let store: JSONDiskStore?
     private var activeSession: AgentSession?
     private var streamTask: Task<Void, Never>?
+    private var discoveryTask: Task<Void, Never>?
+    private var transcriptTask: Task<Void, Never>?
 
     init() {
         do {
@@ -41,8 +53,11 @@ final class AppModel {
                 appropriateFor: nil,
                 create: true
             )
-            store = try JSONDiskStore(rootURL: base.appendingPathComponent("Skynet", isDirectory: true))
+            let storageURL = base.appendingPathComponent("Skynet", isDirectory: true)
+            storageDirectoryURL = storageURL
+            store = try JSONDiskStore(rootURL: storageURL)
             load()
+            refreshDiscovery()
         } catch {
             store = nil
             errorMessage = "Unable to initialize Skynet storage: \(error.localizedDescription)"
@@ -90,6 +105,31 @@ final class AppModel {
         return projectSessions.filter { sessionMatchesSearch($0, query: query) }
     }
 
+    func filteredProjects(for machine: DiscoveredMachine) -> [Project] {
+        filteredProjects.filter { backendID(for: $0) == machine.id }
+    }
+
+    func backendID(for project: Project) -> BackendID {
+        BackendID(project.metadata["backendID"] ?? "local")
+    }
+
+    func refreshDiscovery() {
+        guard !isDiscovering else { return }
+        isDiscovering = true
+        discoveryTask?.cancel()
+        discoveryTask = Task { [weak self] in
+            let snapshots = await MacSessionDiscovery.discover()
+            guard let self, !Task.isCancelled else { return }
+            do {
+                try mergeDiscovery(snapshots)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isDiscovering = false
+            discoveryTask = nil
+        }
+    }
+
     func load() {
         guard let store else { return }
         do {
@@ -112,11 +152,17 @@ final class AppModel {
 
     func addProject(url: URL) {
         let standardized = url.standardizedFileURL.path
-        if let existing = projects.first(where: { $0.rootPath == standardized }) {
+        if let existing = projects.first(where: {
+            $0.rootPath == standardized && backendID(for: $0) == DiscoveredMachine.local.id
+        }) {
             select(project: existing)
             return
         }
-        let project = Project(name: url.lastPathComponent, rootPath: standardized)
+        let project = Project(
+            name: url.lastPathComponent,
+            rootPath: standardized,
+            metadata: ["backendID": DiscoveredMachine.local.id.rawValue]
+        )
         projects.insert(project, at: 0)
         do {
             let store = try requireStore()
@@ -141,12 +187,7 @@ final class AppModel {
         selectedProjectID = session.projectID
         selectedSessionID = session.id
         resetLiveState()
-        do {
-            let store = try requireStore()
-            messages = try store.loadMessages(for: session.id)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        loadTranscript(for: session.id)
     }
 
     func createSession(provider: AgentProviderDescriptor) {
@@ -161,7 +202,7 @@ final class AppModel {
             modelID: model?.id,
             effort: model?.defaultEffort,
             title: nil,
-            backendID: BackendID("local"),
+            backendID: backendID(for: project),
             workingDirectory: project.rootPath
         )
         do {
@@ -250,7 +291,7 @@ final class AppModel {
                     record: record,
                     configuration: .init(
                         provider: provider,
-                        backend: LocalProcessBackend(),
+                        backend: executionBackend(for: record),
                         permissions: .askEverything,
                         store: store
                     )
@@ -306,6 +347,19 @@ final class AppModel {
         }
     }
 
+    func deleteCustomProvider(_ id: ProviderID) {
+        guard id != .codex, id != .claudeCode else { return }
+        do {
+            let store = try requireStore()
+            var configured = try store.loadUserProviders()
+            configured.removeAll { $0.id == id }
+            try store.saveUserProviders(configured)
+            providers = try ProviderCatalog.effective(userConfigured: configured).providers
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func apply(_ event: AgentEvent) {
         switch event {
         case .textDelta(let text): liveText += text
@@ -352,10 +406,164 @@ final class AppModel {
         (session.title ?? "New session").localizedCaseInsensitiveContains(query)
     }
 
+    private func mergeDiscovery(_ snapshots: [MachineSessionSnapshot]) throws {
+        guard let store else { return }
+        machines = snapshots.map(\.machine)
+        machineErrors = Dictionary(
+            uniqueKeysWithValues: snapshots.compactMap { snapshot in
+                snapshot.error.map { (snapshot.machine.id, $0) }
+            }
+        )
+
+        var sessionIndexes: [DiscoverySessionKey: Int] = [:]
+        for (index, session) in sessions.enumerated() {
+            let key = DiscoverySessionKey(session: session)
+            if sessionIndexes[key] == nil { sessionIndexes[key] = index }
+        }
+        for snapshot in snapshots {
+            for discovered in snapshot.sessions {
+                let project = project(
+                    for: discovered.workingDirectory,
+                    backendID: snapshot.machine.id
+                )
+                let key = DiscoverySessionKey(
+                    backendID: snapshot.machine.id,
+                    providerID: discovered.providerID,
+                    resumeToken: discovered.providerSessionID
+                )
+                let existingIndex = sessionIndexes[key]
+                var record = existingIndex.map { sessions[$0] } ?? SessionRecord(
+                    projectID: project.id,
+                    providerID: discovered.providerID,
+                    modelID: discovered.modelID,
+                    title: discovered.title,
+                    backendID: snapshot.machine.id,
+                    workingDirectory: discovered.workingDirectory,
+                    createdAt: discovered.createdAt,
+                    updatedAt: discovered.updatedAt,
+                    providerResumeToken: discovered.providerSessionID
+                )
+                let previousUpdatedAt = record.updatedAt
+                record.projectID = project.id
+                record.modelID = record.modelID ?? discovered.modelID
+                record.backendID = snapshot.machine.id
+                record.workingDirectory = discovered.workingDirectory
+                record.providerResumeToken = discovered.providerSessionID
+                record.updatedAt = max(record.updatedAt, discovered.updatedAt)
+                if record.title == nil { record.title = discovered.title }
+                let shouldReplaceMessages = existingIndex == nil
+                    || record.messageCount != discovered.messages.count
+                    || previousUpdatedAt < discovered.updatedAt
+                if !discovered.messages.isEmpty, shouldReplaceMessages {
+                    record.messageCount = discovered.messages.count
+                    try store.replaceMessages(discovered.messages, for: record.id)
+                }
+                try store.saveSession(record)
+                if let existingIndex {
+                    sessions[existingIndex] = record
+                } else {
+                    sessions.append(record)
+                    sessionIndexes[key] = sessions.endIndex - 1
+                }
+            }
+        }
+        try store.saveProjects(projects)
+        sessions.sort { $0.updatedAt > $1.updatedAt }
+        if selectedProjectID == nil {
+            selectedProjectID = projects.first?.id
+        }
+        if let selectedSessionID {
+            loadTranscript(for: selectedSessionID)
+        }
+    }
+
+    private struct DiscoverySessionKey: Hashable {
+        let backendID: BackendID?
+        let providerID: ProviderID
+        let resumeToken: String?
+
+        init(backendID: BackendID?, providerID: ProviderID, resumeToken: String?) {
+            self.backendID = backendID
+            self.providerID = providerID
+            self.resumeToken = resumeToken
+        }
+
+        init(session: SessionRecord) {
+            self.init(
+                backendID: session.backendID,
+                providerID: session.providerID,
+                resumeToken: session.providerResumeToken
+            )
+        }
+    }
+
+    private func project(for rootPath: String?, backendID: BackendID) -> Project {
+        if let existing = projects.first(where: {
+            $0.rootPath == rootPath && self.backendID(for: $0) == backendID
+        }) {
+            return existing
+        }
+        let name = rootPath.map {
+            let component = URL(fileURLWithPath: $0).lastPathComponent
+            return component.isEmpty ? $0 : component
+        } ?? "Conversations"
+        let project = Project(
+            name: name,
+            rootPath: rootPath,
+            metadata: ["backendID": backendID.rawValue, "discovered": "true"]
+        )
+        projects.append(project)
+        return project
+    }
+
+    private func executionBackend(for record: SessionRecord) -> any ExecutionBackend {
+        let backendID = record.backendID ?? DiscoveredMachine.local.id
+        guard backendID.rawValue.hasPrefix("ssh:") else {
+            return LocalProcessBackend()
+        }
+        let alias = String(backendID.rawValue.dropFirst("ssh:".count))
+        return SSHBackend(id: backendID, displayName: alias, host: alias)
+    }
+
     private func resetLiveState() {
         liveText = ""
         liveThinking = ""
         liveTools = []
+    }
+
+    private func loadTranscript(for sessionID: SessionID) {
+        transcriptTask?.cancel()
+        let store: JSONDiskStore
+        do {
+            store = try requireStore()
+        } catch {
+            messages = []
+            errorMessage = error.localizedDescription
+            isLoadingTranscript = false
+            return
+        }
+        isLoadingTranscript = true
+        messages = []
+        transcriptTask = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                do {
+                    return TranscriptLoadResult(
+                        messages: try store.loadMessages(for: sessionID),
+                        errorMessage: nil
+                    )
+                } catch {
+                    return TranscriptLoadResult(
+                        messages: [],
+                        errorMessage: error.localizedDescription
+                    )
+                }
+            }.value
+            guard let self, !Task.isCancelled, selectedSessionID == sessionID else { return }
+            messages = result.messages
+            errorMessage = result.errorMessage
+            isLoadingTranscript = false
+            transcriptTask = nil
+        }
     }
 
     private func requireStore() throws -> JSONDiskStore {

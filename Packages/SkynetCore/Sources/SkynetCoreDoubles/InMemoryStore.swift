@@ -19,6 +19,7 @@ public final class FailingPersistenceStore: PersistenceStore, @unchecked Sendabl
     public func deleteSession(id: SessionID) throws { try boom() }
     public func appendMessage(_ message: Message, to session: SessionID) throws { try boom() }
     public func loadMessages(for session: SessionID) throws -> [Message] { try boom() }
+    public func replaceMessages(_ messages: [Message], for session: SessionID) throws { try boom() }
     public func savePairing(_ pairing: PairingRecord) throws { try boom() }
     public func loadPairing() throws -> PairingRecord? { try boom() }
     public func deletePairing() throws { try boom() }
@@ -117,6 +118,12 @@ public final class InMemoryStore: PersistenceStore, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return transcripts[session] ?? []
+    }
+
+    public func replaceMessages(_ messages: [Message], for session: SessionID) throws {
+        lock.lock()
+        transcripts[session] = messages
+        lock.unlock()
     }
 
     // MARK: Pairing
