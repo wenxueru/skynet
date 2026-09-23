@@ -111,13 +111,54 @@ private struct MarkdownContentView: View {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .prose(let text):
-                    Text(text)
+                    (Text("\u{200A}") + Text(text) + Text("\u{200A}"))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         // Bold CJK glyphs and Markdown list markers can extend
-                        // slightly outside Text's reported bounds.
+                        // slightly outside Text's reported bounds. The hair
+                        // spaces keep those glyphs away from Text's own clip.
                         .padding(.horizontal, 2)
                         .padding(.vertical, 1)
+                case .heading(let level, let text):
+                    Text(text)
+                        .font(level <= 2 ? .title3.bold() : .headline)
+                        .textSelection(.enabled)
+                        .padding(.top, level <= 2 ? 6 : 2)
+                case .listItem(let marker, let text):
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(marker).frame(minWidth: 18, alignment: .trailing)
+                        Text(text)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, 8)
+                case .quote(let text):
+                    Text(text)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(.tertiary).frame(width: 3)
+                        }
+                        .foregroundStyle(.secondary)
+                case .equation(let equation):
+                    Text(equation)
+                        .font(.system(.title3, design: .serif))
+                        .italic()
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                case .fileCitation(let path):
+                    Button {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    } label: {
+                        Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.fill")
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                case .followup(let title):
+                    Label(title, systemImage: "circle.fill")
+                        .labelStyle(FollowupLabelStyle())
                 case .code(let language, let code):
                     CodeBlockView(language: language, code: code)
                 }
@@ -129,6 +170,12 @@ private struct MarkdownContentView: View {
 
 private enum MarkdownSegment {
     case prose(AttributedString)
+    case heading(level: Int, text: AttributedString)
+    case listItem(marker: String, text: AttributedString)
+    case quote(AttributedString)
+    case equation(String)
+    case fileCitation(path: String)
+    case followup(title: String)
     case code(language: String?, content: String)
 
     static func parse(_ source: String) -> [MarkdownSegment] {
@@ -136,14 +183,24 @@ private enum MarkdownSegment {
         var segments: [MarkdownSegment] = []
         var buffer: [String] = []
         var language: String?
+        var equation: [String]?
 
         func flushProse() {
             guard !buffer.isEmpty else { return }
-            segments.append(.prose(attributed(buffer.joined(separator: "\n"))))
+            segments.append(.prose(attributed(buffer.joined(separator: " "))))
             buffer.removeAll(keepingCapacity: true)
         }
 
         for line in lines {
+            if equation != nil {
+                if line.trimmingCharacters(in: .whitespaces) == #"\]"# {
+                    segments.append(.equation(formatEquation(equation!.joined(separator: " "))))
+                    equation = nil
+                } else {
+                    equation!.append(line)
+                }
+                continue
+            }
             if line.hasPrefix("```") {
                 if language == nil {
                     flushProse()
@@ -154,11 +211,40 @@ private enum MarkdownSegment {
                     buffer.removeAll(keepingCapacity: true)
                     language = nil
                 }
+            } else if language != nil {
+                buffer.append(line)
+            } else if line.trimmingCharacters(in: .whitespaces) == #"\["# {
+                flushProse()
+                equation = []
+            } else if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                flushProse()
+            } else if let citation = capture(citationRegex, in: line) {
+                let prefix = line.components(separatedBy: ":codex-file-citation").first ?? ""
+                if !prefix.trimmingCharacters(in: .whitespaces).isEmpty { buffer.append(prefix) }
+                flushProse()
+                segments.append(.fileCitation(path: citation))
+            } else if let title = capture(followupRegex, in: line) {
+                flushProse()
+                segments.append(.followup(title: title))
+            } else if let heading = heading(in: line) {
+                flushProse()
+                segments.append(.heading(level: heading.level, text: attributed(heading.text)))
+            } else if let item = orderedItem(in: line) {
+                flushProse()
+                segments.append(.listItem(marker: "\(item.number).", text: attributed(item.text)))
+            } else if let item = unorderedItem(in: line) {
+                flushProse()
+                segments.append(.listItem(marker: "•", text: attributed(item)))
+            } else if let quote = capture(quoteRegex, in: line) {
+                flushProse()
+                segments.append(.quote(attributed(quote)))
             } else {
                 buffer.append(line)
             }
         }
-        if let language {
+        if let equation {
+            segments.append(.equation(formatEquation(equation.joined(separator: " "))))
+        } else if let language {
             segments.append(.code(language: language, content: buffer.joined(separator: "\n")))
         } else {
             flushProse()
@@ -167,10 +253,138 @@ private enum MarkdownSegment {
     }
 
     private static func attributed(_ source: String) -> AttributedString {
-        (try? AttributedString(
+        let source = replacingInlineEquations(in: source)
+        return (try? AttributedString(
             markdown: source,
-            options: .init(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(source)
+    }
+
+    private static func heading(in line: String) -> (level: Int, text: String)? {
+        let hashes = line.prefix { $0 == "#" }.count
+        guard (1...6).contains(hashes), line.dropFirst(hashes).first == " " else { return nil }
+        return (hashes, String(line.dropFirst(hashes + 1)))
+    }
+
+    private static func orderedItem(in line: String) -> (number: Int, text: String)? {
+        guard let match = firstMatch(of: orderedItemRegex, in: line),
+              let markerRange = Range(match.range(at: 1), in: line),
+              let itemRange = Range(match.range(at: 0), in: line),
+              let number = Int(line[markerRange]) else { return nil }
+        return (number, String(line[itemRange.upperBound...]))
+    }
+
+    private static func unorderedItem(in line: String) -> String? {
+        guard let match = firstMatch(of: unorderedItemRegex, in: line),
+              let range = Range(match.range(at: 0), in: line) else { return nil }
+        return String(line[range.upperBound...])
+    }
+
+    private static func capture(_ regex: NSRegularExpression, in source: String) -> String? {
+        guard let match = firstMatch(of: regex, in: source),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: source) else { return nil }
+        return String(source[range])
+    }
+
+    private static func firstMatch(
+        of regex: NSRegularExpression,
+        in source: String
+    ) -> NSTextCheckingResult? {
+        regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source))
+    }
+
+    private static func replacingInlineEquations(in source: String) -> String {
+        var result = source
+        for match in inlineEquationRegex.matches(
+            in: source,
+            range: NSRange(source.startIndex..., in: source)
+        ).reversed() {
+            guard let whole = Range(match.range(at: 0), in: result),
+                  let body = Range(match.range(at: 1), in: result) else { continue }
+            result.replaceSubrange(whole, with: formatEquation(String(result[body])))
+        }
+        return result
+    }
+
+    private static func formatEquation(_ source: String) -> String {
+        var result = source
+            .replacingOccurrences(of: #"\rightarrow"#, with: "→")
+            .replacingOccurrences(of: #"\tilde A"#, with: "Ã")
+        while let match = firstMatch(of: textCommandRegex, in: result),
+              let whole = Range(match.range(at: 0), in: result),
+              let body = Range(match.range(at: 1), in: result) {
+            let replacement = String(result[body])
+            result.replaceSubrange(whole, with: replacement)
+        }
+        result = replacingScripts(in: result, marker: "_", symbols: subscriptSymbols)
+        result = replacingScripts(in: result, marker: "^", symbols: superscriptSymbols)
+        return result.replacingOccurrences(of: "  ", with: " ")
+    }
+
+    private static func replacingScripts(
+        in source: String,
+        marker: Character,
+        symbols: [Character: Character]
+    ) -> String {
+        let escapedMarker = NSRegularExpression.escapedPattern(for: String(marker))
+        guard let regex = try? NSRegularExpression(
+            pattern: escapedMarker + #"(?:\{([^}]*)\}|([A-Za-z0-9,+\-=()]))"#
+        ) else { return source }
+        var result = source
+        for match in regex.matches(in: source, range: NSRange(source.startIndex..., in: source)).reversed() {
+            guard let whole = Range(match.range(at: 0), in: result) else { continue }
+            let captureIndex = match.range(at: 1).location != NSNotFound ? 1 : 2
+            guard let bodyRange = Range(match.range(at: captureIndex), in: result) else { continue }
+            let body = result[bodyRange]
+            let converted = String(body.map { symbols[$0] ?? $0 })
+            result.replaceSubrange(whole, with: converted)
+        }
+        return result
+    }
+
+    private static let subscriptSymbols: [Character: Character] = [
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+        "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+        "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+        "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+        "v": "ᵥ", "x": "ₓ", "+": "₊", "-": "₋", "=": "₌",
+        "(": "₍", ")": "₎",
+    ]
+
+    private static let superscriptSymbols: [Character: Character] = [
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "d": "ᵈ", "e": "ᵉ",
+        "f": "ᶠ", "g": "ᵍ", "h": "ʰ", "i": "ⁱ", "j": "ʲ",
+        "k": "ᵏ", "l": "ˡ", "m": "ᵐ", "n": "ⁿ", "o": "ᵒ",
+        "p": "ᵖ", "r": "ʳ", "s": "ˢ", "t": "ᵗ", "u": "ᵘ",
+        "v": "ᵛ", "w": "ʷ", "x": "ˣ", "y": "ʸ", "z": "ᶻ",
+        "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+    ]
+
+    private static let citationRegex = regex(#":codex-file-citation\{path="([^"]+)"[^}]*\}"#)
+    private static let followupRegex = regex(#":codex-followup\[([^]]+)\]"#)
+    private static let quoteRegex = regex(#"^\s*>\s?(.*)$"#)
+    private static let orderedItemRegex = regex(#"^\s*(\d+)\.\s+"#)
+    private static let unorderedItemRegex = regex(#"^\s*[-*+]\s+"#)
+    private static let inlineEquationRegex = regex(#"\\\((.+?)\\\)"#)
+    private static let textCommandRegex = regex(#"\\text\{([^}]*)\}"#)
+
+    private static func regex(_ pattern: String) -> NSRegularExpression {
+        // All patterns are static literals covered by the renderer's build tests.
+        try! NSRegularExpression(pattern: pattern)
+    }
+}
+
+private struct FollowupLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 10) {
+            configuration.icon.font(.system(size: 6))
+            configuration.title
+        }
+        .padding(.leading, 8)
     }
 }
 

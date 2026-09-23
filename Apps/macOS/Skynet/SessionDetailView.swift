@@ -106,6 +106,12 @@ struct SessionDetailView: View {
             .overlay {
                 if model.isLoadingTranscript {
                     ProgressView().controlSize(.small)
+                } else if model.messages.isEmpty, !model.isRunning {
+                    ContentUnavailableView(
+                        "No transcript",
+                        systemImage: "text.bubble",
+                        description: Text("This session only contains metadata; Claude Code did not save any messages.")
+                    )
                 }
             }
             .background {
@@ -159,7 +165,11 @@ struct SessionDetailView: View {
                 }
             }
             .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            }
         }
         .frame(maxWidth: 860)
         .padding(.horizontal, 24)

@@ -6,6 +6,8 @@ struct ContentView: View {
     @Bindable var model: AppModel
     @State private var isImporterPresented = false
     @State private var expansion = SidebarExpansionState()
+    @State private var selectedSessionIDs: Set<SessionID> = []
+    @State private var pendingDeletion: Set<SessionID> = []
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -40,9 +42,29 @@ struct ContentView: View {
                 model.addProject(url: url)
             }
         }
-        .onAppear { expansion.initialize(machines: model.machines, projects: model.projects) }
+        .onAppear {
+            expansion.initialize(machines: model.machines, projects: model.projects)
+            if let id = model.selectedSessionID { selectedSessionIDs = [id] }
+        }
         .onChange(of: model.machines.map(\.id)) { _, _ in synchronizeExpansion() }
         .onChange(of: model.projects.map(\.id)) { _, _ in synchronizeExpansion() }
+        .onChange(of: model.selectedSessionID) { _, id in
+            if let id, !selectedSessionIDs.contains(id) {
+                selectedSessionIDs = [id]
+            } else if id == nil {
+                selectedSessionIDs.removeAll()
+            }
+        }
+        .confirmationDialog(
+            deletionTitle,
+            isPresented: deletionConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { deletePendingSessions() }
+            Button("Cancel", role: .cancel) { pendingDeletion.removeAll() }
+        } message: {
+            Text("This removes the selected sessions and their locally cached transcripts.")
+        }
     }
 
     private var sidebar: some View {
@@ -98,8 +120,8 @@ struct ContentView: View {
             }
             .padding(12)
 
-            List(selection: sessionSelection) {
-                ForEach(model.machines) { machine in
+            List(selection: $selectedSessionIDs) {
+                ForEach(model.visibleMachines) { machine in
                     SidebarDisclosureRow(
                         isExpanded: expansion.contains(machine.id),
                         action: { expansion.toggle(machine.id) }
@@ -131,6 +153,11 @@ struct ContentView: View {
                                         .contentShape(Rectangle())
                                         .padding(.leading, 38)
                                         .tag(session.id)
+                                        .contextMenu {
+                                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                                requestDeletion(for: session.id)
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -138,20 +165,54 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
+            .onChange(of: selectedSessionIDs) { oldSelection, newSelection in
+                updatePrimarySelection(from: oldSelection, to: newSelection)
+            }
+            .onDeleteCommand { requestDeletion(for: selectedSessionIDs) }
         }
     }
 
-    private var sessionSelection: Binding<SessionID?> {
+    private var deletionTitle: String {
+        pendingDeletion.count == 1 ? "Delete Session?" : "Delete \(pendingDeletion.count) Sessions?"
+    }
+
+    private var deletionConfirmationPresented: Binding<Bool> {
         Binding(
-            get: { model.selectedSessionID },
-            set: { id in
-                guard let id,
-                      let session = model.sessions.first(where: { $0.id == id }) else {
-                    return
-                }
-                model.select(session: session)
-            }
+            get: { !pendingDeletion.isEmpty },
+            set: { if !$0 { pendingDeletion.removeAll() } }
         )
+    }
+
+    private func updatePrimarySelection(
+        from oldSelection: Set<SessionID>,
+        to newSelection: Set<SessionID>
+    ) {
+        guard !newSelection.isEmpty else {
+            model.clearSessionSelection()
+            return
+        }
+        let primaryID = newSelection.subtracting(oldSelection).first
+            ?? model.selectedSessionID.flatMap { newSelection.contains($0) ? $0 : nil }
+            ?? newSelection.first
+        guard let primaryID,
+              primaryID != model.selectedSessionID,
+              let session = model.sessions.first(where: { $0.id == primaryID }) else { return }
+        model.select(session: session)
+    }
+
+    private func requestDeletion(for id: SessionID) {
+        requestDeletion(for: selectedSessionIDs.contains(id) ? selectedSessionIDs : [id])
+    }
+
+    private func requestDeletion(for ids: Set<SessionID>) {
+        guard !ids.isEmpty else { return }
+        pendingDeletion = ids
+    }
+
+    private func deletePendingSessions() {
+        model.deleteSessions(pendingDeletion)
+        selectedSessionIDs.subtract(pendingDeletion)
+        pendingDeletion.removeAll()
     }
 
     private func synchronizeExpansion() {
