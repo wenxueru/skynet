@@ -26,13 +26,57 @@ enum CodexAppServerBridge {
         ])
     }
 
-    static func startTurn(threadID: String, turn: AgentTurnRequest) throws -> Data {
+    static func deleteRequest(threadID: String) throws -> Data {
+        try initialization() + encode([
+            "id": 1,
+            "method": "thread/delete",
+            "params": ["threadId": .string(threadID)],
+        ])
+    }
+
+    static func setNameRequest(threadID: String, name: String) throws -> Data {
+        try initialization() + encode([
+            "id": 1,
+            "method": "thread/setName",
+            "params": ["threadId": .string(threadID), "name": .string(name)],
+        ])
+    }
+
+    static func forkRequest(threadID: String) throws -> Data {
+        try initialization() + encode([
+            "id": 1,
+            "method": "thread/fork",
+            "params": ["threadId": .string(threadID)],
+        ])
+    }
+
+    static func startTurn(
+        threadID: String,
+        turn: AgentTurnRequest,
+        approvalMode: SessionRecord.CodexApprovalMode
+    ) throws -> Data {
+        var input: [JSONValue] = turn.prompt.isEmpty
+            ? [] : [["type": "text", "text": .string(turn.prompt)]]
+        for attachment in turn.attachments {
+            guard case .inline(let data, let mediaType) = attachment.payload,
+                  mediaType.hasPrefix("image/") else {
+                throw SkynetError.attachmentUnsupported(
+                    provider: "Codex",
+                    reason: "Image attachment could not be encoded for the app server."
+                )
+            }
+            input.append([
+                "type": "image",
+                "url": .string("data:\(mediaType);base64,\(data.base64EncodedString())"),
+            ])
+        }
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
-            "input": [["type": "text", "text": .string(turn.prompt)]],
+            "input": .array(input),
             "approvalPolicy": "on-request",
             "sandboxPolicy": ["type": "workspaceWrite"],
         ]
+        if approvalMode == .automatic { params["approvalsReviewer"] = "auto_review" }
         if let cwd = turn.workingDirectory { params["cwd"] = .string(cwd) }
         if let model = turn.modelID { params["model"] = .string(model.rawValue) }
         if let effort = turn.effort { params["effort"] = .string(effort.rawValue) }

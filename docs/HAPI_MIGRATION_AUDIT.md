@@ -1,35 +1,54 @@
-# Hapi → Skynet feature audit (macOS)
+# Hapi → Skynet macOS migration audit
 
-This is an inventory of user-facing behavior, not a claim that the two apps share a data model. The comparison uses Hapi's `SessionListView`, `AgentHistoryActions`, chat, files, settings, and pairing screens against Skynet's current macOS UI and shared core. Recheck this list when changing the sidebar or composer.
+Source of truth: `/Users/wenxueru/Documents/hapi-deleted-2026-09-22`.
+Scope agreed with the user: finish the macOS desktop experience first. Hapi Hub,
+iOS/Android clients, pairing, and mobile push are outside this phase. A feature
+is complete only when its UI, persistence, provider behavior, and tests work;
+an entry point alone is not completion.
 
-| Feature | Skynet status | Notes |
+| Area | Status | Remaining acceptance work |
 | --- | --- | --- |
-| Machine → project → session sidebar; search; expand/collapse | Implemented | Native sidebar in `ContentView`. |
-| Recent time grouping (bell) | Implemented | Toggle in the sidebar; project grouping remains the default. |
-| Quick machine filter | Implemented | Sidebar filter menu; distinct from the persistent show/hide controls in SSH settings. |
-| Local/remote machine markers, project path, pin, rename | Implemented | Sidebar and project context menu. |
-| Open project in VS Code | Implemented | Local app launch or Remote-SSH URL, matching Hapi's routing. Remote VS Code extension/configuration remains an external prerequisite. |
-| New session in the clicked project | Implemented | Available from project and single-session context menus. |
-| Delete all sessions in a project | Implemented, different storage semantics | Confirmation removes Skynet records and cached transcripts only. It does not remove original Codex/Claude history or project files. The empty Skynet project is also removed. |
-| Multi-select archive/delete, clear selection | Partial | Codex archive/unarchive now calls app-server `thread/archive` / `thread/unarchive` before changing Skynet state. Claude Code CLI exposes no equivalent native archive operation; its Archive action is disabled. Older Skynet-only archives can still be restored locally. Delete still operates on Skynet records only. |
-| Remove project | Implemented | Removes the project and all its Skynet sessions/cache, **not** the filesystem folder or original provider history. |
-| Per-machine visibility | Implemented | SSH settings can hide discovered machines. |
-| Session title edit, transcript, reasoning/tools, timestamps, image display, auto-scroll | Implemented or partial | See UI and transcript presentation. Rendering and tool-detail fidelity are not guaranteed identical to Hapi/ChatGPT. |
-| Codex/Claude permission, model/effort controls | Implemented or partial | Controls are provider-specific; actual availability depends on installed provider version. |
-| Image attachment | Partial | UI and common attachment model exist; Codex's end-to-end image support is not complete. |
-| Provider-history archive/delete/rename | Partial | Codex provider archive and unarchive are implemented. Claude Code CLI archive is unavailable through an official CLI operation; provider-history delete and rename are not migrated. Menu/confirmation text must not imply original history deletion. |
-| Externally running session status and live attach | **Not migrated** | Discovery imports history; an external CLI process is not a Skynet-owned run. Stop/delete safeguards cover Skynet-owned active sessions only. |
-| Hapi hub sessions, paired phone relay, QR pairing, push/Live Activity | **Not migrated to the macOS app** | These depend on Hapi's hub/protocol. Skynet's iOS relay interfaces are not a production-compatible Hapi server. |
-| Hapi Files browser, Scratchlist, Usage pages | **Not migrated** | Independent product surfaces; not equivalent to Skynet's project/session sidebar. |
-| Voice input, queued messages, richer interactive tool/question UI | **Not migrated or partial** | Do not advertise parity without end-to-end verification. |
+| Machine/project/session sidebar, search, expansion | Implemented | UI regression test. |
+| Recent-date grouping and machine filter | Implemented | UI regression test. |
+| Project pin, rename, remove, open in VS Code | Implemented | Verify local and Remote-SSH launches on configured machines. |
+| Project session delete | Implemented | Deletes provider-owned conversations; project files remain. Verify real Codex/Claude sessions in an isolated account. |
+| Session pin (project/global), manual unread, copy ID | Implemented in code | UI regression test. Hapi's resolvable cross-session reference/mention is separate. |
+| Session export (JSON/Markdown) | Partial | Current export includes transcript and image metadata, not self-contained image bytes or Scratchlist. Test with large history. |
+| Codex native archive/unarchive/delete | Implemented | End-to-end provider verification against installed app-server. |
+| Claude native delete | Implemented | End-to-end provider verification against isolated local and SSH sessions. Native archive is not exposed by Claude Code CLI. |
+| Transcript text, Markdown, images, reasoning, tools | Partial | Local histories import structured content, but SSH discovery still emits text-only messages. Compare long and multimodal sessions visually; add Hapi's specialized tool presentation and progress/status. |
+| Consecutive tool-call grouping/expansion | Partial | Core grouping and basic intent/error summary are implemented; Hapi's timing, focused detail, and lazy older-history hydration are not. |
+| Composer image paste and send | Implemented in code | End-to-end Codex app-server/Claude verification with real images, including remote backend. |
+| Provider model, effort, permissions, fast/auto modes | Partial | Verify behavior against installed Codex/Claude versions and active sessions; add UI regression tests. |
+| Native provider title synchronization | Partial | Codex `thread/setName` is implemented; Claude Code has no verified native title operation. |
+| Conversation fork/rewind | Partial | Current-state Codex and Claude forks are implemented; Codex historical fork/rewind still need native turn-boundary mapping and confirmation. Claude historical fork/rewind are unsupported by its current CLI. |
+| Mark unread from activity, notification/attention state | Partial | Explicit unread exists; Hapi's activity-derived attention and inbox-like behavior do not. |
+| External CLI live status/attach | Not migrated | Discovery imports history but cannot control an externally running CLI. |
+| Queue/scheduled messages and Scratchlist | Not migrated | Requires durable scheduling and draft/attachment semantics. |
+| Hapi Files browser and integrated terminal | Not migrated | Need local/SSH filesystem and process boundary design. |
+| Usage/context pages and session outline | Partial | User-message outline with search/jump and a usage dashboard (7/30 days or all, daily/agent/model) are implemented. Local and SSH Claude/Codex history usage is imported, but Codex cumulative totals are assigned to last activity, not exact request dates. Context-window dashboard remains; provider history with no reported usage cannot be counted. |
+| Voice input and interactive question/tool cards | Not migrated or partial | Native microphone flow and provider-specific interaction tests needed. |
+| Rich composer, drag/drop, attachment ordering, send scheduling | Partial | Image paste/send exists; Hapi's rich text segments, drag/drop targeting, sortable attachments, queued messages, scheduled messages, and composer parking do not. |
+| Message actions and sharing | Partial | Plain-text message copy works; Hapi's richer action menu, share-turn dialog, and share route are missing. |
+| Specialized tool cards and generated media | Not migrated | Hapi's diff/patch, edit/write, plan/checklist, interactive question, permission, generated-media, and duration views are not equivalent to the current generic tool group. |
+| Machine and display preferences | Partial | SSH machine discovery/toggle and appearance work; Hapi's separate machine, chat, display, storage, and voice controls need a setting-by-setting comparison. |
+| Session files and agent terminal | Not migrated | Hapi has dedicated file tree, file viewer, integrated terminal, and agent-terminal views; Skynet has only project handoff to external editors. |
 
 ## Deletion contract
 
-`Remove project` calls Skynet's record deletion for every session in the project, then removes the project entry. `Delete all sessions in project` uses the same session deletion path, which removes the now-empty project automatically. Both suppress re-import of the deleted discovered sessions, but leave source files and provider conversations intact. A newly created provider session in that directory can create a new project again.
+`Delete session` and `Delete all sessions in project` first delete provider-owned
+Codex/Claude conversation data, then remove the Skynet record and transcript.
+On provider failure, the Skynet record remains. `Remove project` deliberately
+removes only Skynet's project and cached sessions; it does not delete project
+files or original provider conversations. New provider sessions can recreate a
+project on discovery.
 
-## Verification still needed
+## Release gate for desktop parity
 
-- Exercise local and remote VS Code launches on machines with the app/Remote-SSH extension installed.
-- UI-test multi-selection, context menus, machine filtering, and empty-project cleanup.
-- Decide explicitly whether destructive provider-history actions belong in Skynet; do not silently change current deletion semantics.
-- Check parity for the remaining chat, Files, Scratchlist, and mobile/hub surfaces before claiming full Hapi migration.
+1. Every applicable row above is implemented or explicitly identified as a
+   provider limitation, not silently omitted.
+2. Core and macOS builds pass; destructive operations are tested against
+   isolated provider data before touching user sessions.
+3. Verify long Claude and Codex transcripts, images, tool groups, permission
+   prompts, remote machines, and theme changes in the installed app.
+4. Back up, replace, and restart `/Applications/Skynet.app` after each batch.

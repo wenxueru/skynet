@@ -12,6 +12,8 @@ public struct AgentTurnRequest: Hashable, Sendable {
     public var workingDirectory: String?
     /// Provider-side conversation token (`--resume`), when one is known.
     public var resumeToken: String?
+    /// For Claude Code, branch from `resumeToken` on this turn only.
+    public var forkOnResume: Bool
 
     public init(
         turnID: UUID = UUID(),
@@ -22,7 +24,8 @@ public struct AgentTurnRequest: Hashable, Sendable {
         modelID: ModelID? = nil,
         effort: ReasoningEffort? = nil,
         workingDirectory: String? = nil,
-        resumeToken: String? = nil
+        resumeToken: String? = nil,
+        forkOnResume: Bool = false
     ) {
         self.turnID = turnID
         self.sessionID = sessionID
@@ -33,6 +36,7 @@ public struct AgentTurnRequest: Hashable, Sendable {
         self.effort = effort
         self.workingDirectory = workingDirectory
         self.resumeToken = resumeToken
+        self.forkOnResume = forkOnResume
     }
 }
 

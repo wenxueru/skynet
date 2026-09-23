@@ -7,6 +7,10 @@ import Foundation
 /// statistics. `AgentSession` (the live actor) reads and writes this record
 /// through the persistence store.
 public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
+    public enum PinMode: String, Codable, Hashable, Sendable {
+        case project
+        case global
+    }
     public enum CodexApprovalMode: String, Codable, Hashable, Sendable {
         case manual
         case automatic
@@ -44,6 +48,10 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
     public var isArchived: Bool?
     /// Set for sessions archived through the provider; nil also covers older Skynet-only archives.
     public var archivedInProvider: Bool?
+    /// Sidebar placement only; does not alter the provider conversation.
+    public var pinMode: PinMode?
+    /// An explicit unread marker, cleared when the conversation is opened.
+    public var markedUnreadAt: Date?
     /// Human-facing title. `nil` until the first turn completes.
     public var title: String?
     /// Which backend the session ran on last (local / ssh:<host> / relay).
@@ -57,6 +65,8 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
     /// resume a conversation on the next turn (Claude Code `--resume`,
     /// Codex thread resume).
     public var providerResumeToken: String?
+    /// Claude Code fork source until the first child turn returns its new native ID.
+    public var forkSourceToken: String?
     public var totalUsage: TokenUsage
     public var messageCount: Int
 
@@ -72,6 +82,8 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         claudePermissionMode: ClaudePermissionMode? = nil,
         isArchived: Bool? = nil,
         archivedInProvider: Bool? = nil,
+        pinMode: PinMode? = nil,
+        markedUnreadAt: Date? = nil,
         title: String? = nil,
         backendID: BackendID? = nil,
         workingDirectory: String? = nil,
@@ -79,6 +91,7 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         providerResumeToken: String? = nil,
+        forkSourceToken: String? = nil,
         totalUsage: TokenUsage = TokenUsage(),
         messageCount: Int = 0
     ) {
@@ -93,6 +106,8 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         self.claudePermissionMode = claudePermissionMode
         self.isArchived = isArchived
         self.archivedInProvider = archivedInProvider
+        self.pinMode = pinMode
+        self.markedUnreadAt = markedUnreadAt
         self.title = title
         self.backendID = backendID
         self.workingDirectory = workingDirectory
@@ -100,6 +115,7 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.providerResumeToken = providerResumeToken
+        self.forkSourceToken = forkSourceToken
         self.totalUsage = totalUsage
         self.messageCount = messageCount
     }

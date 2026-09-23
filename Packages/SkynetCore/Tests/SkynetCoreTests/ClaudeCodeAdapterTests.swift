@@ -13,6 +13,7 @@ struct ClaudeCodeAdapterTests {
         effort: ReasoningEffort? = nil,
         workingDirectory: String? = nil,
         resumeToken: String? = nil,
+        forkOnResume: Bool = false,
         attachments: [ImageAttachment] = []
     ) -> AgentTurnRequest {
         AgentTurnRequest(
@@ -23,7 +24,8 @@ struct ClaudeCodeAdapterTests {
             modelID: modelID,
             effort: effort,
             workingDirectory: workingDirectory,
-            resumeToken: resumeToken
+            resumeToken: resumeToken,
+            forkOnResume: forkOnResume
         )
     }
 
@@ -61,6 +63,17 @@ struct ClaudeCodeAdapterTests {
         #expect(arguments[arguments.index(after: arguments.firstIndex(of: "--model")!)] == "claude-opus-4-8")
         #expect(joined.contains("--effort high"))
         #expect(joined.contains("--resume sess-42"))
+    }
+
+    @Test func forkFlagIsOneTurnResumeOption() throws {
+        let arguments = try adapter.buildArguments(
+            provider: provider,
+            turn: turn(resumeToken: "source-123", forkOnResume: true),
+            permissions: .askEverything,
+            interactivePermissions: false
+        )
+        #expect(arguments.contains("--fork-session"))
+        #expect(arguments.contains("source-123"))
     }
 
     @Test func permissionRulesBecomeToolFlags() throws {
