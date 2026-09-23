@@ -78,10 +78,6 @@ public actor AgentSession {
         var aligned = record
         aligned.providerID = configuration.provider.id
         aligned.backendID = configuration.backend.id
-        if aligned.modelID == nil {
-            aligned.modelID =
-                configuration.provider.resolvedModelCatalog.resolvedDefaultModel?.id
-        }
         self.record = aligned
     }
 
@@ -211,14 +207,34 @@ public actor AgentSession {
                 on: configuration.backend,
                 operation: "Running \(configuration.provider.displayName)"
             )
-            let arguments =
-                configuration.provider.defaultArguments
-                + (try adapter.buildArguments(
+            let interactiveCodex = configuration.provider.kind == .codex
+                && record.codexApprovalMode == .manual
+            if interactiveCodex && !turn.attachments.isEmpty {
+                throw SkynetError.attachmentUnsupported(
+                    provider: configuration.provider.displayName,
+                    reason: "The Codex app-server bridge does not support attachments yet."
+                )
+            }
+            var adapterArguments = interactiveCodex
+                ? ["app-server", "--stdio"]
+                : try adapter.buildArguments(
                     provider: configuration.provider,
                     turn: turn,
                     permissions: sessionPermissions,
                     interactivePermissions: configuration.permissionResponder != nil
-                ))
+                )
+            if (configuration.provider.kind == .claudeCode
+                || configuration.provider.kind == .claudeCodeCompatible),
+                let mode = record.claudePermissionMode {
+                adapterArguments += ["--permission-mode", mode.rawValue]
+            }
+            if configuration.provider.kind == .codex, let fastMode = record.codexFastMode {
+                adapterArguments.insert(contentsOf: [
+                    "-c", "service_tier=\"\(fastMode ? "fast" : "default")\"",
+                    "-c", "features.fast_mode=\(fastMode)",
+                ], at: 1)
+            }
+            let arguments = configuration.provider.defaultArguments + adapterArguments
             let request = ExecutionRequest(
                 executable: configuration.provider.resolvedExecutableName
                     ?? configuration.provider.kind.defaultExecutableName,
@@ -230,10 +246,10 @@ public actor AgentSession {
             let process = try await configuration.backend.launch(request)
             currentProcess = process
 
-            if let stdinData = try adapter.launchStdin(
-                provider: configuration.provider,
-                turn: turn
-            ) {
+            let launchInput = interactiveCodex
+                ? try CodexAppServerBridge.handshake(resumeToken: turn.resumeToken)
+                : try adapter.launchStdin(provider: configuration.provider, turn: turn)
+            if let stdinData = launchInput {
                 try await process.writeToStdin(stdinData)
             }
 
@@ -242,12 +258,15 @@ public actor AgentSession {
                     guard let self else { return }
                     for try await line in process.stdoutLines {
                         if Task.isCancelled { break }
-                        await self.handleOutputLine(
-                            line,
-                            turn: turn,
-                            context: context,
-                            continuation: continuation
-                        )
+                        if interactiveCodex {
+                            await self.handleCodexAppServerLine(
+                                line, turn: turn, context: context, continuation: continuation
+                            )
+                        } else {
+                            await self.handleOutputLine(
+                                line, turn: turn, context: context, continuation: continuation
+                            )
+                        }
                     }
                 }
                 group.addTask { [weak self, process] in
@@ -278,6 +297,12 @@ public actor AgentSession {
                     let tail = stderr.count > 2000 ? String(stderr.suffix(2000)) : stderr
                     await failTurn(
                         SkynetError.agentExited(code: code, stderr: tail),
+                        context: context,
+                        continuation: continuation
+                    )
+                } else if interactiveCodex {
+                    await failTurn(
+                        SkynetError.executionFailed(reason: "Codex app-server exited before completing the turn."),
                         context: context,
                         continuation: continuation
                     )
@@ -315,6 +340,65 @@ public actor AgentSession {
     }
 
     // MARK: - Event handling
+
+    private func handleCodexAppServerLine(
+        _ line: String,
+        turn: AgentTurnRequest,
+        context: TurnContext,
+        continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
+    ) async {
+        guard let frame = CodexAppServerBridge.decode(line) else { return }
+        if frame["id"]?.intValue == 1 {
+            if let threadID = frame["result"]?["thread"]?["id"]?.stringValue {
+                await processEvent(.sessionTokenReceived(providerSessionID: threadID), continuation: continuation)
+                do {
+                    try await currentProcess?.writeToStdin(
+                        CodexAppServerBridge.startTurn(threadID: threadID, turn: turn)
+                    )
+                } catch {
+                    await failTurn(
+                        .executionFailed(reason: "Starting Codex turn failed: \(error)"),
+                        context: context,
+                        continuation: continuation
+                    )
+                    await currentProcess?.terminate()
+                }
+            } else {
+                await failTurn(
+                    .executionFailed(reason: frame["error"]?["message"]?.stringValue ?? "Codex thread start failed"),
+                    context: context,
+                    continuation: continuation
+                )
+                await currentProcess?.terminate()
+            }
+            return
+        }
+        if frame["id"]?.intValue == 2, let error = frame["error"]?["message"]?.stringValue {
+            await failTurn(.executionFailed(reason: error), context: context, continuation: continuation)
+            await currentProcess?.terminate()
+            return
+        }
+        if let id = frame["id"], frame["method"] != nil {
+            if let request = CodexAppServerBridge.permissionRequest(frame, turn: turn) {
+                let event = AgentEvent.permissionRequested(request)
+                await configuration.notifications.handle(event, session: record)
+                continuation.yield(event)
+                let answer = await configuration.permissionResponder?.decide(request)
+                    ?? PermissionResponse(requestID: request.id, decision: .deny)
+                if let data = try? CodexAppServerBridge.approvalResponse(frame: frame, decision: answer.decision) {
+                    try? await currentProcess?.writeToStdin(data)
+                }
+            } else if let data = try? CodexAppServerBridge.unsupportedResponse(id: id) {
+                try? await currentProcess?.writeToStdin(data)
+            }
+            return
+        }
+        for event in CodexAppServerBridge.events(frame, turn: turn) {
+            await processEvent(event, continuation: continuation)
+            if case .turnCompleted = event { await currentProcess?.terminate() }
+            if case .turnFailed = event { await currentProcess?.terminate() }
+        }
+    }
 
     private func handleOutputLine(
         _ line: String,

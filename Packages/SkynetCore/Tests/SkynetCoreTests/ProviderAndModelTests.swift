@@ -117,23 +117,15 @@ struct ModelCatalogTests {
     @Test func claudeSnapshotListsCurrentModels() {
         let catalog = ModelCatalog.claudeCodeSnapshot
         let ids = catalog.models.map(\.id.rawValue)
-        #expect(ids.contains("claude-fable-5"))
-        #expect(ids.contains("claude-opus-4-8"))
-        #expect(ids.contains("claude-opus-4-7"))
-        #expect(ids.contains("claude-sonnet-5"))
-        #expect(ids.contains("claude-sonnet-4-6"))
-        #expect(ids.contains("claude-haiku-4-5"))
-        // The default must be a model that is actually listed.
-        #expect(catalog.resolvedDefaultModel?.id.rawValue == "claude-opus-4-8")
-        // Never a date-suffixed variant.
-        #expect(!ids.contains { $0.contains("2025") })
+        #expect(ids == ["fable", "opus", "sonnet", "haiku"])
+        #expect(catalog.resolvedDefaultModel == nil)
     }
 
     @Test func codexSnapshotIsConservative() {
         let catalog = ModelCatalog.codexSnapshot
         let ids = catalog.models.map(\.id.rawValue)
-        #expect(ids == ["gpt-5.1-codex", "gpt-5.1", "gpt-5-codex", "gpt-5"])
-        #expect(catalog.resolvedDefaultModel?.id.rawValue == "gpt-5.1-codex")
+        #expect(ids.isEmpty)
+        #expect(catalog.resolvedDefaultModel == nil)
     }
 
     @Test func effortsAreOrderedAscending() {
@@ -150,7 +142,7 @@ struct ModelCatalogTests {
         #expect(ModelCatalog.builtInSnapshot(for: .claudeCode) == ModelCatalog.claudeCodeSnapshot)
         #expect(
             ModelCatalog.builtInSnapshot(for: .claudeCodeCompatible)
-                == ModelCatalog.claudeCodeSnapshot
+                == ModelCatalog()
         )
     }
 
@@ -173,21 +165,21 @@ struct ModelCatalogTests {
             supportedEfforts: [.low]
         )
         catalog = catalog.replacingModel(tweaked)
-        #expect(catalog.models.count == 4)
+        #expect(catalog.models.count == 1)
         #expect(catalog.model(with: ModelID("gpt-5.1"))?.displayName == "GPT-5.1 (tweaked)")
 
         catalog = catalog.replacingModel(
             ModelDescriptor(id: ModelID("brand-new"), displayName: "Brand new")
         )
-        #expect(catalog.models.count == 5)
+        #expect(catalog.models.count == 2)
         #expect(catalog.model(with: ModelID("brand-new")) != nil)
     }
 
-    @Test func resolvedDefaultFallsBackToFirstModel() {
+    @Test func missingDefaultDefersToProvider() {
         let catalog = ModelCatalog(
             models: [ModelDescriptor(id: ModelID("only"), displayName: "Only")],
             defaultModelID: ModelID("missing")
         )
-        #expect(catalog.resolvedDefaultModel?.id.rawValue == "only")
+        #expect(catalog.resolvedDefaultModel == nil)
     }
 }

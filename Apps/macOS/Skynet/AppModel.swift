@@ -33,8 +33,10 @@ final class AppModel {
     var workingSince: Date?
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
+    var pendingPermissionRequest: PermissionRequest?
     var machines: [DiscoveredMachine] = [.local]
     var disabledMachineIDs: Set<BackendID>
+    private var deletedDiscoveryKeys: Set<DiscoverySessionKey>
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
     var isLoadingTranscript = false
@@ -45,14 +47,19 @@ final class AppModel {
     private var streamTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var transcriptTask: Task<Void, Never>?
+    private var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
 
     private static let disabledMachinesKey = "disabledMachineIDs"
+    private static let deletedDiscoveryKeysKey = "deletedDiscoveryKeys"
 
     init() {
         disabledMachineIDs = Set(
             (UserDefaults.standard.stringArray(forKey: Self.disabledMachinesKey) ?? [])
                 .map { BackendID($0) }
         )
+        deletedDiscoveryKeys = UserDefaults.standard.data(forKey: Self.deletedDiscoveryKeysKey)
+            .flatMap { try? JSONDecoder().decode(Set<DiscoverySessionKey>.self, from: $0) }
+            ?? []
         do {
             let base = try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -94,13 +101,14 @@ final class AppModel {
 
     var filteredProjects: [Project] {
         let query = normalizedSearchText
-        guard !query.isEmpty else { return projects }
-        return projects.filter { project in
+        let matching = query.isEmpty ? projects : projects.filter { project in
             projectMatchesSearch(project, query: query)
                 || sessions.contains {
                     $0.projectID == project.id && sessionMatchesSearch($0, query: query)
                 }
         }
+        return matching.filter { $0.metadata["pinned"] == "true" }
+            + matching.filter { $0.metadata["pinned"] != "true" }
     }
 
     func sessions(for project: Project) -> [SessionRecord] {
@@ -109,7 +117,7 @@ final class AppModel {
 
     func filteredSessions(for project: Project) -> [SessionRecord] {
         let query = normalizedSearchText
-        let projectSessions = sessions(for: project)
+        let projectSessions = sessions(for: project).filter { $0.isArchived != true }
         guard !query.isEmpty, !projectMatchesSearch(project, query: query) else {
             return projectSessions
         }
@@ -187,7 +195,7 @@ final class AppModel {
 
     func select(project: Project) {
         selectedProjectID = project.id
-        if let first = sessions(for: project).first {
+        if let first = filteredSessions(for: project).first {
             select(session: first)
         } else {
             selectedSessionID = nil
@@ -211,20 +219,169 @@ final class AppModel {
         resetLiveState()
     }
 
-    func deleteSessions(_ ids: Set<SessionID>) {
-        guard !ids.isEmpty else { return }
+    @discardableResult
+    func deleteSessions(_ ids: Set<SessionID>) -> Bool {
+        guard !ids.isEmpty else { return true }
+        if isRunning, let selectedSessionID, ids.contains(selectedSessionID) {
+            errorMessage = "Stop the running session before deleting it."
+            return false
+        }
         do {
             let store = try requireStore()
+            let deleted = sessions.filter { ids.contains($0.id) }
             for id in ids {
                 try store.deleteSession(id: id)
             }
-            sessions.removeAll { ids.contains($0.id) }
+            let remainingSessions = sessions.filter { !ids.contains($0.id) }
+            let affectedProjects = Set(deleted.compactMap(\.projectID))
+            let occupiedProjects = Set(remainingSessions.compactMap(\.projectID))
+            let remainingProjects = projects.filter {
+                !affectedProjects.contains($0.id) || occupiedProjects.contains($0.id)
+            }
+            if remainingProjects.count != projects.count {
+                try store.saveProjects(remainingProjects)
+            }
+
+            deletedDiscoveryKeys.formUnion(deleted.compactMap { session in
+                guard session.providerResumeToken != nil else { return nil }
+                return DiscoverySessionKey(session: session)
+            })
+            UserDefaults.standard.set(
+                try JSONEncoder().encode(deletedDiscoveryKeys),
+                forKey: Self.deletedDiscoveryKeysKey
+            )
+
+            sessions = remainingSessions
+            projects = remainingProjects
+            if let selectedProjectID, !projects.contains(where: { $0.id == selectedProjectID }) {
+                self.selectedProjectID = nil
+            }
             if let selectedSessionID, ids.contains(selectedSessionID) {
                 clearSessionSelection()
             }
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    func setProjectPinned(_ project: Project, pinned: Bool) {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects[index].metadata["pinned"] = pinned ? "true" : nil
+        projects[index].updatedAt = Date()
+        persistProjects()
+    }
+
+    func renameProject(_ project: Project, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects[index].name = trimmed
+        projects[index].updatedAt = Date()
+        persistProjects()
+    }
+
+    @discardableResult
+    func setProjectChatsArchived(_ project: Project, archived: Bool) async -> Set<SessionID> {
+        let ids = Set(sessions(for: project)
+            .filter { ($0.isArchived == true) != archived }
+            .map(\.id))
+        return await setSessionsArchived(ids, archived: archived)
+    }
+
+    @discardableResult
+    func setSessionsArchived(_ ids: Set<SessionID>, archived: Bool) async -> Set<SessionID> {
+        guard let store else { return [] }
+        var changed: Set<SessionID> = []
+        var failures: [String] = []
+        for session in sessions where ids.contains(session.id) {
+            if isRunning && selectedSessionID == session.id {
+                failures.append("Stop \(session.title ?? "the running session") before changing its archive state.")
+                continue
+            }
+            do {
+                if archived && session.providerID != .codex {
+                    throw SkynetError.executionFailed(
+                        reason: "Claude Code CLI does not expose a native session archive operation."
+                    )
+                }
+                if session.providerID == .codex && (archived || session.archivedInProvider == true) {
+                    guard let threadID = session.providerResumeToken else {
+                        throw SkynetError.executionFailed(
+                            reason: "This Codex session has no provider thread to archive."
+                        )
+                    }
+                    let provider = providers.first { $0.id == .codex }
+                    try await CodexThreadArchive.setArchived(
+                        archived,
+                        threadID: threadID,
+                        backend: executionBackend(for: session),
+                        executable: provider?.resolvedExecutableName ?? "codex",
+                        environment: provider?.environment ?? [:]
+                    )
+                }
+                guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { continue }
+                var updated = sessions[index]
+                updated.isArchived = archived
+                if updated.providerID == .codex {
+                    updated.archivedInProvider = archived ? true : nil
+                }
+                try store.saveSession(updated)
+                sessions[index] = updated
+                changed.insert(session.id)
+            } catch {
+                failures.append("\(session.title ?? "Session"): \(error.localizedDescription)")
+            }
+        }
+        if archived, let selectedSessionID, changed.contains(selectedSessionID) {
+            clearSessionSelection()
+        }
+        if !failures.isEmpty { errorMessage = failures.joined(separator: "\n") }
+        return changed
+    }
+
+    func openProjectInVSCode(_ project: Project) {
+        guard let arguments = VSCodeProjectOpen.arguments(
+            rootPath: project.rootPath, backendID: backendID(for: project)
+        ) else {
+            errorMessage = "This project has no directory to open in VS Code."
+            return
+        }
+        Task {
+            let failure = await Task.detached(priority: .userInitiated) { () -> String? in
+                do {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                    process.arguments = arguments
+                    try process.run()
+                    process.waitUntilExit()
+                    return process.terminationStatus == 0
+                        ? nil : "Visual Studio Code could not open this project."
+                } catch {
+                    return "Visual Studio Code could not open this project: \(error.localizedDescription)"
+                }
+            }.value
+            if let failure { errorMessage = failure }
+        }
+    }
+
+    func removeProject(_ project: Project) {
+        let ids = Set(sessions(for: project).map(\.id))
+        if isRunning, let selectedSessionID, ids.contains(selectedSessionID) {
+            errorMessage = "Stop the running session before removing its project."
+            return
+        }
+        guard deleteSessions(ids) else { return }
+        guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects.remove(at: index)
+        persistProjects()
+        if selectedProjectID == project.id { selectedProjectID = nil }
+    }
+
+    private func persistProjects() {
+        do { try requireStore().saveProjects(projects) }
+        catch { errorMessage = error.localizedDescription }
     }
 
     func isMachineEnabled(_ id: BackendID) -> Bool {
@@ -258,12 +415,17 @@ final class AppModel {
             errorMessage = "Create or select a project first."
             return
         }
-        let model = provider.resolvedModelCatalog.resolvedDefaultModel
+        createSession(provider: provider, in: project)
+    }
+
+    func createSession(provider: AgentProviderDescriptor, in project: Project) {
         let record = SessionRecord(
             projectID: project.id,
             providerID: provider.id,
-            modelID: model?.id,
-            effort: model?.defaultEffort,
+            modelID: nil,
+            effort: nil,
+            claudePermissionMode: provider.kind == .claudeCode
+                || provider.kind == .claudeCodeCompatible ? .manual : nil,
             title: nil,
             backendID: backendID(for: project),
             workingDirectory: project.rootPath
@@ -289,11 +451,9 @@ final class AppModel {
 
     func updateModel(_ modelID: ModelID?) {
         guard var session = selectedSession else { return }
+        guard session.modelID != modelID else { return }
         session.modelID = modelID
-        if let provider = selectedProvider,
-           let descriptor = modelID.flatMap({ provider.resolvedModelCatalog.model(with: $0) }) {
-            session.effort = descriptor.defaultEffort
-        }
+        session.effort = nil
         save(session)
     }
 
@@ -301,6 +461,41 @@ final class AppModel {
         guard var session = selectedSession else { return }
         session.effort = effort
         save(session)
+    }
+
+    func updatePermissionEffect(_ effect: PermissionRule.Effect) {
+        guard var session = selectedSession else { return }
+        session.permissionEffect = effect
+        save(session)
+    }
+
+    func updateCodexApprovalMode(_ mode: SessionRecord.CodexApprovalMode) {
+        guard var session = selectedSession else { return }
+        session.codexApprovalMode = mode
+        session.permissionEffect = .ask
+        save(session)
+    }
+
+    func updateCodexFastMode(_ enabled: Bool) {
+        guard var session = selectedSession else { return }
+        session.codexFastMode = enabled
+        save(session)
+    }
+
+    func updateClaudePermissionMode(_ mode: SessionRecord.ClaudePermissionMode) {
+        guard var session = selectedSession else { return }
+        session.claudePermissionMode = mode
+        session.permissionEffect = .ask
+        save(session)
+    }
+
+    func answerPermission(_ decision: PermissionResponse.Decision) {
+        guard let request = pendingPermissionRequest else { return }
+        permissionContinuation?.resume(
+            returning: PermissionResponse(requestID: request.id, decision: decision)
+        )
+        permissionContinuation = nil
+        pendingPermissionRequest = nil
     }
 
     func attachImage(url: URL) {
@@ -355,7 +550,25 @@ final class AppModel {
                     configuration: .init(
                         provider: provider,
                         backend: executionBackend(for: record),
-                        permissions: .askEverything,
+                        permissions: PermissionPolicy(
+                            defaultEffect: record.permissionEffect ?? .ask
+                        ),
+                        permissionResponder: record.codexApprovalMode == .manual
+                            || ((provider.kind == .claudeCode || provider.kind == .claudeCodeCompatible)
+                                && record.claudePermissionMode == .manual)
+                            || (provider.kind != .codex && record.claudePermissionMode == nil
+                                && record.permissionEffect == .ask)
+                            ? AppPermissionResponder { [weak self] request in
+                                guard let self else {
+                                    return PermissionResponse(
+                                        requestID: request.id,
+                                        decision: .deny,
+                                        reason: "The session is no longer available."
+                                    )
+                                }
+                                return await self.requestPermission(request)
+                            }
+                            : nil,
                         store: store
                     )
                 )
@@ -379,6 +592,7 @@ final class AppModel {
     }
 
     func cancel() {
+        answerPermission(.deny)
         Task { await activeSession?.cancelActiveTurn() }
     }
 
@@ -485,14 +699,15 @@ final class AppModel {
         }
         for snapshot in snapshots {
             for discovered in snapshot.sessions {
-                let project = project(
-                    for: discovered.workingDirectory,
-                    backendID: snapshot.machine.id
-                )
                 let key = DiscoverySessionKey(
                     backendID: snapshot.machine.id,
                     providerID: discovered.providerID,
                     resumeToken: discovered.providerSessionID
+                )
+                guard !deletedDiscoveryKeys.contains(key) else { continue }
+                let project = project(
+                    for: discovered.workingDirectory,
+                    backendID: snapshot.machine.id
                 )
                 let existingIndex = sessionIndexes[key]
                 var record = existingIndex.map { sessions[$0] } ?? SessionRecord(
@@ -540,7 +755,7 @@ final class AppModel {
         }
     }
 
-    private struct DiscoverySessionKey: Hashable {
+    private struct DiscoverySessionKey: Hashable, Codable {
         let backendID: BackendID?
         let providerID: ProviderID
         let resumeToken: String?
@@ -594,6 +809,22 @@ final class AppModel {
         liveTools = []
     }
 
+    private func requestPermission(_ request: PermissionRequest) async -> PermissionResponse {
+        if let pendingPermissionRequest {
+            permissionContinuation?.resume(
+                returning: PermissionResponse(
+                    requestID: pendingPermissionRequest.id,
+                    decision: .deny,
+                    reason: "A newer permission request replaced this request."
+                )
+            )
+        }
+        return await withCheckedContinuation { continuation in
+            pendingPermissionRequest = request
+            permissionContinuation = continuation
+        }
+    }
+
     private func loadTranscript(for sessionID: SessionID) {
         transcriptTask?.cancel()
         let store: JSONDiskStore
@@ -636,5 +867,13 @@ final class AppModel {
             )
         }
         return store
+    }
+}
+
+private struct AppPermissionResponder: PermissionResponder {
+    let handler: @Sendable (PermissionRequest) async -> PermissionResponse
+
+    func decide(_ request: PermissionRequest) async -> PermissionResponse {
+        await handler(request)
     }
 }

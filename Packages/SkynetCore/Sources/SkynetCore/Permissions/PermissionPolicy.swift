@@ -58,7 +58,7 @@ public enum PermissionDecision: String, Sendable, Hashable {
 ///
 /// The policy is applied *before* launch: the adapters translate it into
 /// provider flags (Claude Code `--allowedTools`/`--disallowedTools`/
-/// `--permission-mode`, Codex `--sandbox`/`--full-auto`), so an `allow` or
+/// `--permission-mode`, Codex sandbox/reviewer flags), so an `allow` or
 /// `deny` verdict never depends on a human being present. Per-tool rules
 /// are a Claude-family capability; Codex only understands the coarse
 /// default effect, which its adapter maps onto sandbox modes.

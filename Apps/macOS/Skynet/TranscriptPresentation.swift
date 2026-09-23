@@ -11,8 +11,8 @@ struct TranscriptMessageView: View {
             if message.origin == .user { Spacer(minLength: 96) }
             VStack(alignment: message.origin == .user ? .trailing : .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(message.content.enumerated()), id: \.offset) { _, block in
-                        TranscriptBlockView(block: block, rendersMarkdown: message.origin != .user)
+                    ForEach(message.content.indices, id: \.self) { index in
+                        TranscriptBlockView(block: message.content[index], rendersMarkdown: message.origin != .user)
                     }
                 }
                 .padding(message.origin == .user ? 14 : 0)
@@ -108,8 +108,8 @@ private struct MarkdownContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                switch segment {
+            ForEach(segments.indices, id: \.self) { index in
+                switch segments[index] {
                 case .prose(let text):
                     (Text("\u{200A}") + Text(text) + Text("\u{200A}"))
                         .textSelection(.enabled)
@@ -161,6 +161,8 @@ private struct MarkdownContentView: View {
                         .labelStyle(FollowupLabelStyle())
                 case .code(let language, let code):
                     CodeBlockView(language: language, code: code)
+                case .table(let table):
+                    MarkdownTableView(table: table)
                 }
             }
         }
@@ -177,6 +179,7 @@ private enum MarkdownSegment {
     case fileCitation(path: String)
     case followup(title: String)
     case code(language: String?, content: String)
+    case table(MarkdownTable)
 
     static func parse(_ source: String) -> [MarkdownSegment] {
         let lines = source.components(separatedBy: .newlines)
@@ -184,6 +187,7 @@ private enum MarkdownSegment {
         var buffer: [String] = []
         var language: String?
         var equation: [String]?
+        var nextUnparsedLine = 0
 
         func flushProse() {
             guard !buffer.isEmpty else { return }
@@ -191,7 +195,9 @@ private enum MarkdownSegment {
             buffer.removeAll(keepingCapacity: true)
         }
 
-        for line in lines {
+        for index in lines.indices {
+            guard index >= nextUnparsedLine else { continue }
+            let line = lines[index]
             if equation != nil {
                 if line.trimmingCharacters(in: .whitespaces) == #"\]"# {
                     segments.append(.equation(formatEquation(equation!.joined(separator: " "))))
@@ -218,6 +224,10 @@ private enum MarkdownSegment {
                 equation = []
             } else if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 flushProse()
+            } else if let parsed = MarkdownTable.parse(lines, startingAt: index) {
+                flushProse()
+                segments.append(.table(parsed.table))
+                nextUnparsedLine = parsed.nextLineIndex
             } else if let citation = capture(citationRegex, in: line) {
                 let prefix = line.components(separatedBy: ":codex-file-citation").first ?? ""
                 if !prefix.trimmingCharacters(in: .whitespaces).isEmpty { buffer.append(prefix) }
@@ -252,7 +262,7 @@ private enum MarkdownSegment {
         return segments.isEmpty ? [.prose(attributed(source))] : segments
     }
 
-    private static func attributed(_ source: String) -> AttributedString {
+    static func attributed(_ source: String) -> AttributedString {
         let source = replacingInlineEquations(in: source)
         return (try? AttributedString(
             markdown: source,
@@ -410,6 +420,66 @@ private enum MarkdownRenderCache {
 
         init(segments: [MarkdownSegment]) {
             self.segments = segments
+        }
+    }
+}
+
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+    private let renderedHeaders: [AttributedString]
+    private let renderedRows: [[AttributedString]]
+    private let columnWidths: [CGFloat]
+
+    init(table: MarkdownTable) {
+        self.table = table
+        renderedHeaders = table.headers.map(MarkdownSegment.attributed)
+        renderedRows = table.rows.map { $0.map(MarkdownSegment.attributed) }
+
+        var longestCells = table.headers.map(\.count)
+        for row in table.rows {
+            for column in row.indices {
+                longestCells[column] = max(longestCells[column], row[column].count)
+            }
+        }
+        columnWidths = longestCells.map { min(max(CGFloat($0) * 8, 140), 320) }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            VStack(alignment: .leading, spacing: 0) {
+                row(renderedHeaders)
+                    .fontWeight(.semibold)
+                    .padding(.vertical, 9)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                ForEach(renderedRows.indices, id: \.self) { index in
+                    Divider()
+                    row(renderedRows[index])
+                        .padding(.vertical, 9)
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+    }
+
+    private func row(_ cells: [AttributedString]) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            ForEach(table.headers.indices, id: \.self) { column in
+                Text(cells[column])
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: columnWidths[column], alignment: alignment(for: column))
+            }
+        }
+    }
+
+    private func alignment(for column: Int) -> Alignment {
+        switch table.alignments[column] {
+        case .leading: .leading
+        case .center: .center
+        case .trailing: .trailing
         }
     }
 }

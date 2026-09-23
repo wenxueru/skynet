@@ -7,13 +7,15 @@ struct ProviderSettingsView: View {
     @State private var selection: SettingsCategory = .general
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             List(SettingsCategory.allCases, selection: $selection) { category in
                 Label(category.title, systemImage: category.icon).tag(category)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
-        } detail: {
+            .frame(width: 200)
+
+            Divider()
+
             settingsPage.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }

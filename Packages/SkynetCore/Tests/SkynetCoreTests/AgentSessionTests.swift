@@ -17,6 +17,7 @@ enum ClaudeFrames {
 struct AgentSessionTests {
     private func makeSession(
         provider: AgentProviderDescriptor = .claudeCode,
+        record: SessionRecord? = nil,
         backend: any ExecutionBackend,
         permissions: PermissionPolicy = .askEverything,
         responder: (any PermissionResponder)? = nil,
@@ -29,7 +30,7 @@ struct AgentSessionTests {
             notifications = EventNotificationRouter(notifiers: [notifier])
         }
         return try AgentSession(
-            record: SessionRecord(providerID: provider.id),
+            record: record ?? SessionRecord(providerID: provider.id),
             configuration: .init(
                 provider: provider,
                 backend: backend,
@@ -98,8 +99,24 @@ struct AgentSessionTests {
         #expect(request.label.hasPrefix("claude-code:"))
         #expect(request.arguments.contains("--print"))
         #expect(request.arguments.contains("stream-json"))
-        // Session default model comes from the built-in catalog.
-        #expect(request.arguments.contains("claude-opus-4-8"))
+        // An unset model defers to the installed provider CLI.
+        #expect(!request.arguments.contains("--model"))
+    }
+
+    @Test func claudePermissionModesUseNativeCLIValues() async throws {
+        for mode in SessionRecord.ClaudePermissionMode.allCases {
+            let backend = ScriptedExecutionBackend(scripts: [
+                .init(stdoutLines: [ClaudeFrames.resultSuccess])
+            ])
+            let record = SessionRecord(providerID: .claudeCode, claudePermissionMode: mode)
+            let session = try makeSession(record: record, backend: backend)
+
+            _ = try await collectEvents(try await session.send("hi"))
+
+            let arguments = backend.launchedRequests[0].arguments
+            let index = try #require(arguments.firstIndex(of: "--permission-mode"))
+            #expect(arguments[index + 1] == mode.rawValue)
+        }
     }
 
     @Test func providerDefaultArgumentsPrecedeAdapterArguments() async throws {
@@ -140,13 +157,71 @@ struct AgentSessionTests {
         #expect(request.arguments.first == "exec")
         #expect(request.arguments.contains("--json"))
         #expect(request.arguments.last == "fix the bug")
-        // The Codex model default also comes from its catalog.
-        #expect(request.arguments.contains("gpt-5.1-codex"))
+        #expect(!request.arguments.contains("--model"))
 
         #expect(events.compactMap(\.turnCompleted).first?.finalText == "fixed it")
         let record = await session.record
         #expect(record.status == .idle)
         #expect(record.providerResumeToken == "thread_1")
+    }
+
+    @Test func codexFastModeOverridesTheSessionServiceTier() async throws {
+        for enabled in [true, false] {
+            let backend = ScriptedExecutionBackend(scripts: [
+                .init(stdoutLines: [#"{"id":"thread_1","msg":{"type":"task_complete","last_message":"Done"}}"#])
+            ])
+            let record = SessionRecord(providerID: .codex, codexFastMode: enabled)
+            let session = try makeSession(provider: .codex, record: record, backend: backend)
+
+            _ = try await collectEvents(try await session.send("hi"))
+
+            let arguments = backend.launchedRequests[0].arguments
+            #expect(arguments.contains("service_tier=\"\(enabled ? "fast" : "default")\""))
+            #expect(arguments.contains("features.fast_mode=\(enabled)"))
+        }
+    }
+
+    @Test func manualCodexApprovalRoundTripsThroughAppServer() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { data, process in
+                let input = String(decoding: data, as: UTF8.self)
+                let methods = input.split(separator: "\n").compactMap {
+                    try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+                }.compactMap { $0["method"]?.stringValue }
+                if methods.contains("thread/start") {
+                    process.emitStdout(#"{"id":1,"result":{"thread":{"id":"thread-manual"}}}"#)
+                } else if methods.contains("turn/start") {
+                    process.emitStdout(#"{"id":2,"result":{"turn":{"id":"turn-1"}}}"#)
+                    process.emitStdout(#"{"id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-manual","turnId":"turn-1","itemId":"cmd-1","command":"date","reason":"Run a command"}}"#)
+                } else if input.contains("decision") {
+                    process.emitStdout(#"{"method":"item/completed","params":{"item":{"id":"answer-1","type":"agentMessage","text":"Done"}}}"#)
+                    process.emitStdout(#"{"method":"turn/completed","params":{"turn":{"status":"completed"}}}"#)
+                    process.finishStdout()
+                }
+            })
+        ])
+        let responder = ScriptedPermissionResponder(responses: [
+            PermissionResponse(requestID: "", decision: .allow)
+        ])
+        let record = SessionRecord(
+            providerID: AgentProviderDescriptor.codex.id,
+            codexApprovalMode: .manual
+        )
+        let session = try makeSession(
+            provider: .codex, record: record, backend: backend, responder: responder
+        )
+
+        let events = try await collectEvents(try await session.send("Run date"))
+
+        #expect(backend.launchedRequests[0].arguments == ["app-server", "--stdio"])
+        #expect(responder.requests.count == 1)
+        #expect(responder.requests.first?.summary.contains("date") == true)
+        #expect(backend.launchedProcesses[0].stdinWrites.contains {
+            String(decoding: $0, as: UTF8.self).contains("\"decision\":\"accept\"")
+        })
+        #expect(events.compactMap(\.turnCompleted).count == 1)
+        #expect(events.compactMap(\.message).last?.plainText == "Done")
+        #expect((await session.record).providerResumeToken == "thread-manual")
     }
 
     @Test func resumeTokenFromFirstTurnIsPassedToTheSecond() async throws {

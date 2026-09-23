@@ -15,6 +15,7 @@ public enum ReasoningEffort: String, Codable, Sendable, CaseIterable, Hashable {
     /// Between `high` and `max`. Claude models from Opus 4.7 onward.
     case xhigh
     case max
+    case ultra
 
     public var displayName: String {
         switch self {
@@ -24,15 +25,16 @@ public enum ReasoningEffort: String, Codable, Sendable, CaseIterable, Hashable {
         case .high: return "High"
         case .xhigh: return "Extra high"
         case .max: return "Maximum"
+        case .ultra: return "Ultra"
         }
     }
 }
 
 /// One selectable model exposed by a provider.
 ///
-/// Descriptors are *snapshot data*, not live facts: SkynetCore ships a
-/// conservative built-in snapshot per provider kind and users can replace it
-/// wholesale by setting `AgentProviderDescriptor.models`. Never treat a
+/// Descriptors are suggestions, not live availability facts. The macOS app
+/// reads Codex availability from its local CLI cache; providers can replace
+/// the suggestions by setting `AgentProviderDescriptor.models`. Never treat a
 /// missing field as an error — decode leniently and let the UI degrade
 /// gracefully.
 public struct ModelDescriptor: Codable, Hashable, Sendable {
@@ -109,8 +111,7 @@ public struct ModelDescriptor: Codable, Hashable, Sendable {
 /// The set of models a provider offers, plus which one to pick by default.
 public struct ModelCatalog: Codable, Hashable, Sendable {
     public var models: [ModelDescriptor]
-    /// The model selected when the user has not chosen one. `nil` means the
-    /// first entry of `models` (or whatever the provider CLI defaults to).
+    /// Explicit suggested default. `nil` leaves model selection to the CLI.
     public var defaultModelID: ModelID?
 
     public init(models: [ModelDescriptor] = [], defaultModelID: ModelID? = nil) {
@@ -122,13 +123,12 @@ public struct ModelCatalog: Codable, Hashable, Sendable {
         models.first { $0.id == id }
     }
 
-    /// The model a new session should use: the explicit default if it is
-    /// actually present, otherwise the first entry.
+    /// The explicitly configured default, if present in this catalog.
     public var resolvedDefaultModel: ModelDescriptor? {
         if let defaultModelID, let model = model(with: defaultModelID) {
             return model
         }
-        return models.first
+        return nil
     }
 
     /// Upserts a descriptor, preserving order for updates and appending
@@ -145,142 +145,29 @@ public struct ModelCatalog: Codable, Hashable, Sendable {
 
     // MARK: - Built-in snapshots
 
-    /// The built-in model snapshot for a provider kind.
-    ///
-    /// These are deliberately conservative: they list stable, widely
-    /// available model identifiers and can be replaced at any time by a
-    /// provider's `models` override — SkynetCore never queries the network
-    /// to refresh them.
+    /// Stable built-in suggestions; versioned availability is discovered by
+    /// the app or supplied through a provider override.
     public static func builtInSnapshot(for kind: AgentProviderDescriptor.Kind) -> ModelCatalog {
         switch kind {
         case .codex:
             return codexSnapshot
-        case .claudeCode, .claudeCodeCompatible:
+        case .claudeCode:
             return claudeCodeSnapshot
+        case .claudeCodeCompatible:
+            return ModelCatalog()
         }
     }
 
-    /// Claude models known to the Claude Code CLI.
-    ///
-    /// Snapshotted 2026-09; a user who needs newer (or older) model strings
-    /// sets them on the provider descriptor instead of waiting for an app
-    /// update.
-    public static let claudeCodeSnapshot = ModelCatalog(
-        models: [
-            ModelDescriptor(
-                id: ModelID("claude-fable-5"),
-                displayName: "Claude Fable 5",
-                family: "fable",
-                supportedEfforts: [.low, .medium, .high, .xhigh, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000,
-                notes: "Most capable; thinking is always on."
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-opus-4-8"),
-                displayName: "Claude Opus 4.8",
-                family: "opus",
-                supportedEfforts: [.low, .medium, .high, .xhigh, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-opus-4-7"),
-                displayName: "Claude Opus 4.7",
-                family: "opus",
-                supportedEfforts: [.low, .medium, .high, .xhigh, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-opus-4-6"),
-                displayName: "Claude Opus 4.6",
-                family: "opus",
-                supportedEfforts: [.low, .medium, .high, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-sonnet-5"),
-                displayName: "Claude Sonnet 5",
-                family: "sonnet",
-                supportedEfforts: [.low, .medium, .high, .xhigh, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-sonnet-4-6"),
-                displayName: "Claude Sonnet 4.6",
-                family: "sonnet",
-                supportedEfforts: [.low, .medium, .high, .max],
-                supportsVision: true,
-                contextWindowTokens: 1_000_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("claude-haiku-4-5"),
-                displayName: "Claude Haiku 4.5",
-                family: "haiku",
-                supportedEfforts: [.low, .medium, .high],
-                supportsVision: true,
-                contextWindowTokens: 200_000,
-                maxOutputTokens: 64_000,
-                notes: "Fastest and cheapest."
-            ),
-        ],
-        defaultModelID: ModelID("claude-opus-4-8")
-    )
+    /// CLI aliases remain stable while versioned model IDs change frequently.
+    /// An unset model lets Claude Code choose its own default.
+    public static let claudeCodeSnapshot = ModelCatalog(models: [
+        ModelDescriptor(id: ModelID("fable"), displayName: "Fable", supportedEfforts: [.low, .medium, .high, .xhigh, .max]),
+        ModelDescriptor(id: ModelID("opus"), displayName: "Opus", supportedEfforts: [.low, .medium, .high, .xhigh, .max]),
+        ModelDescriptor(id: ModelID("sonnet"), displayName: "Sonnet", supportedEfforts: [.low, .medium, .high, .xhigh, .max]),
+        ModelDescriptor(id: ModelID("haiku"), displayName: "Haiku"),
+    ])
 
-    /// Models known to the Codex CLI.
-    ///
-    /// Deliberately minimal — Codex model names churn quickly, so the
-    /// snapshot sticks to stable identifiers and users can override the
-    /// list on the provider descriptor.
-    public static let codexSnapshot = ModelCatalog(
-        models: [
-            ModelDescriptor(
-                id: ModelID("gpt-5.1-codex"),
-                displayName: "GPT-5.1 Codex",
-                family: "gpt-5.1",
-                supportedEfforts: [.minimal, .low, .medium, .high],
-                supportsVision: true,
-                contextWindowTokens: 400_000,
-                maxOutputTokens: 128_000,
-                notes: "Default Codex coding model."
-            ),
-            ModelDescriptor(
-                id: ModelID("gpt-5.1"),
-                displayName: "GPT-5.1",
-                family: "gpt-5.1",
-                supportedEfforts: [.minimal, .low, .medium, .high],
-                supportsVision: true,
-                contextWindowTokens: 400_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("gpt-5-codex"),
-                displayName: "GPT-5 Codex",
-                family: "gpt-5",
-                supportedEfforts: [.minimal, .low, .medium, .high],
-                supportsVision: true,
-                contextWindowTokens: 400_000,
-                maxOutputTokens: 128_000
-            ),
-            ModelDescriptor(
-                id: ModelID("gpt-5"),
-                displayName: "GPT-5",
-                family: "gpt-5",
-                supportedEfforts: [.minimal, .low, .medium, .high],
-                supportsVision: true,
-                contextWindowTokens: 400_000,
-                maxOutputTokens: 128_000
-            ),
-        ],
-        defaultModelID: ModelID("gpt-5.1-codex")
-    )
+    /// Codex availability is account- and machine-specific; the macOS app
+    /// reads the installed CLI's cache instead of publishing guessed IDs.
+    public static let codexSnapshot = ModelCatalog()
 }

@@ -74,7 +74,7 @@ struct CodexAdapterTests {
             permissions: .askEverything,
             interactivePermissions: false
         )
-        #expect(ask.contains("--sandbox") && ask.contains("workspace-write"))
+        #expect(ask.contains("--approve-for-me"))
 
         let allow = try adapter.buildArguments(
             provider: provider,
@@ -82,7 +82,9 @@ struct CodexAdapterTests {
             permissions: PermissionPolicy(rules: [], defaultEffect: .allow),
             interactivePermissions: false
         )
-        #expect(allow.contains("--full-auto"))
+        #expect(allow.contains("danger-full-access"))
+        #expect(allow.contains("--ask-for-approval"))
+        #expect(allow.contains("never"))
     }
 
     @Test func existingThreadUsesExecResume() throws {

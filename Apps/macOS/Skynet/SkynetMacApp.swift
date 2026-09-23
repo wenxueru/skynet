@@ -9,14 +9,17 @@ struct SkynetMacApp: App {
         WindowGroup {
             ContentView(model: model)
                 .frame(minWidth: 980, minHeight: 640)
-                .preferredColorScheme(AppAppearance(rawValue: appearance)?.colorScheme)
+                .onAppear { AppAppearance.apply(appearance) }
+                .onChange(of: appearance) { _, value in AppAppearance.apply(value) }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1320, height: 860)
 
         Settings {
             ProviderSettingsView(model: model)
                 .frame(width: 760, height: 560)
-                .preferredColorScheme(AppAppearance(rawValue: appearance)?.colorScheme)
+                .onAppear { AppAppearance.apply(appearance) }
+                .onChange(of: appearance) { _, value in AppAppearance.apply(value) }
         }
     }
 }

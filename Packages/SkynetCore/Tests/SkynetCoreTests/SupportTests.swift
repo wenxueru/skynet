@@ -132,6 +132,17 @@ struct IdentifierTests {
         #expect(UUID(uuidString: text.trimmingCharacters(in: CharacterSet(charactersIn: "\""))) != nil)
     }
 
+    @Test func olderArchivedSessionHasNoProviderArchiveMarker() throws {
+        let session = SessionRecord(providerID: .codex, isArchived: true, archivedInProvider: true)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any])
+        object.removeValue(forKey: "archivedInProvider")
+        let decoded = try JSONDecoder().decode(
+            SessionRecord.self, from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(decoded.isArchived == true)
+        #expect(decoded.archivedInProvider == nil)
+    }
+
     @Test func toolCallIDsCarryProviderStrings() {
         #expect(ToolCallID("toolu_abc123").rawValue == "toolu_abc123")
     }

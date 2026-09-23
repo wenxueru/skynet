@@ -42,16 +42,16 @@ public struct CodexAdapter: ProviderProtocolAdapter {
         if let effort = turn.effort {
             arguments += ["-c", "model_reasoning_effort=\(effort.rawValue)"]
         }
-        // Codex has no per-tool permission allowlist; only the coarse
-        // default effect maps onto sandbox modes. `exec` is non-interactive
-        // and never prompts.
+        // The exec JSON stream cannot hand an approval prompt to Skynet.
+        // Use Codex's built-in automatic reviewer for workspace escalations;
+        // human approval needs an interactive app-server transport.
         switch permissions.defaultEffect {
         case .deny:
-            arguments += ["--sandbox", "read-only"]
+            arguments += ["--sandbox", "read-only", "--ask-for-approval", "never"]
         case .ask:
-            arguments += ["--sandbox", "workspace-write"]
+            arguments += ["--approve-for-me"]
         case .allow:
-            arguments += ["--full-auto"]
+            arguments += ["--sandbox", "danger-full-access", "--ask-for-approval", "never"]
         }
         if let resumeToken = turn.resumeToken {
             arguments += ["resume", resumeToken]
