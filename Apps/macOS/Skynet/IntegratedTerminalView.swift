@@ -183,7 +183,8 @@ private final class TerminalController: NSObject, ObservableObject, WKScriptMess
             let remote = workingDirectory.map {
                 "cd \(SSHBackend.shellQuote($0)) && exec ${SHELL:-/bin/sh} -l"
             } ?? "exec ${SHELL:-/bin/sh} -l"
-            arguments = [executable, "-tt", "--", sshHost, remote]
+            arguments = [executable, "-tt"] + SSHBackend.connectionReuseOptions
+                + ["--", sshHost, remote]
         } else {
             arguments = [executable, "-l"]
         }

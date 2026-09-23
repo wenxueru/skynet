@@ -15,6 +15,50 @@ import Foundation
 /// requires the server's `AcceptEnv`/`PermitUserEnvironment` to allow it —
 /// configure the Mac accordingly if the remote CLI needs the variables.
 public struct SSHBackend: ExecutionBackend {
+    /// Reuse an authenticated SSH transport briefly across short operations.
+    /// Each remote command still runs independently; this only avoids paying
+    /// the connection and authentication handshake repeatedly.
+    public static let connectionReuseOptions = [
+        "-oControlMaster=auto",
+        "-oControlPersist=60",
+        "-oControlPath=%d/.ssh/skynet-%C",
+    ]
+
+    /// Turns SSH stderr into a useful failure message without presenting
+    /// connection warnings as the cause of a failed remote command.
+    public static func failureReason(
+        operation: String,
+        exitCode: Int32,
+        stderr: String
+    ) -> String {
+        let lines = stderr
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !isNonFatalWarning($0) }
+        let details = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let failure = exitCode == 255
+            ? "SSH connection failed (exit status 255)"
+            : "\(operation) failed (exit status \(exitCode))"
+
+        guard !details.isEmpty else {
+            return "\(failure). SSH reported no actionable error details."
+        }
+        return "\(failure): \(details)"
+    }
+
+    private static func isNonFatalWarning(_ line: String) -> Bool {
+        let line = line.lowercased()
+        if line.contains("not using a post-quantum key exchange algorithm")
+            || line.contains("session may be vulnerable to")
+            || line.contains("the server may need to be upgraded")
+            || line.contains("see https://openssh.com/pq.html") {
+            return true
+        }
+        return line.contains("controlsocket")
+            && line.contains("already exists")
+            && line.contains("disabling multiplexing")
+    }
+
     public var id: BackendID
     public var displayName: String
     public let kind: ExecutionBackendKind = .ssh
@@ -63,7 +107,7 @@ public struct SSHBackend: ExecutionBackend {
         port: Int?,
         user: String?
     ) -> [String] {
-        var arguments: [String] = ["-oBatchMode=yes"]
+        var arguments: [String] = ["-oBatchMode=yes"] + connectionReuseOptions
         if let user {
             arguments += ["-l", user]
         }
