@@ -155,7 +155,7 @@ private enum SSHConfigLoader {
     }
 }
 
-private enum RemoteSessionDiscovery {
+enum RemoteSessionDiscovery {
     private struct WireSession: Decodable {
         struct WireMessage: Decodable {
             let role: String
@@ -231,6 +231,80 @@ private enum RemoteSessionDiscovery {
             }
         }.value
     }
+
+    static func fullTranscript(for record: SessionRecord) async throws -> DiscoveredSession? {
+        guard let backendID = record.backendID?.rawValue,
+              backendID.hasPrefix("ssh:"),
+              let token = record.providerResumeToken else { return nil }
+        let host = String(backendID.dropFirst("ssh:".count))
+        let provider = record.providerID.rawValue
+        return try await Task.detached(priority: .userInitiated) {
+            let temporaryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("skynet-remote-transcript-\(UUID().uuidString).jsonl")
+            guard FileManager.default.createFile(atPath: temporaryURL.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            let destination = try FileHandle(forWritingTo: temporaryURL)
+            defer { try? destination.close() }
+
+            let process = Process()
+            let stderr = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = [
+                "-oBatchMode=yes", "-oConnectTimeout=5", "-oStrictHostKeyChecking=yes",
+                "--", host,
+                "python3 -c \(SSHBackend.shellQuote(fullTranscriptScript)) "
+                    + "\(SSHBackend.shellQuote(provider)) \(SSHBackend.shellQuote(token))",
+            ]
+            process.standardOutput = destination
+            process.standardError = stderr
+            try process.run()
+            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                let detail = String(decoding: errorData, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw SkynetError.executionFailed(
+                    reason: detail.isEmpty ? "Remote transcript could not be loaded." : detail
+                )
+            }
+            switch record.providerID {
+            case .codex:
+                return SessionHistoryDiscovery.parseCodexTranscript(
+                    at: temporaryURL, indexedTitle: record.title
+                )
+            case .claudeCode:
+                return SessionHistoryDiscovery.parseClaudeTranscript(at: temporaryURL)
+            default:
+                return nil
+            }
+        }.value
+    }
+
+    private static let fullTranscriptScript = #"""
+import glob,os,sys
+provider,sid=sys.argv[1:3]
+home=os.path.expanduser('~')
+if provider=='codex':
+    paths=[p for p in glob.glob(os.path.join(home,'.codex','sessions','**','*.jsonl'),recursive=True)
+           if sid in os.path.basename(p)]
+elif provider=='claude-code':
+    paths=glob.glob(os.path.join(home,'.claude','projects','*',sid+'.jsonl'))
+else:
+    paths=[]
+if not paths:
+    sys.exit(2)
+path=max(paths,key=os.path.getmtime)
+if os.path.getsize(path)>100_000_000:
+    sys.stderr.write('Remote transcript exceeds the 100 MB safety limit.')
+    sys.exit(3)
+with open(path,'rb') as source:
+    while True:
+        chunk=source.read(65536)
+        if not chunk: break
+        sys.stdout.buffer.write(chunk)
+"""#
 
     private static func providerID(_ value: String) -> ProviderID? {
         switch value {

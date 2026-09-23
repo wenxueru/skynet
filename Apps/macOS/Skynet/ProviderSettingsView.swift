@@ -218,6 +218,16 @@ private struct UsageSettingsView: View {
     @State private var range: SessionUsageRange = .sevenDays
     @State private var summary: SessionUsageSummary?
     @State private var loadError: String?
+    @State private var selectedContextWindow: Int?
+
+    private var latestPromptTokens: Int? {
+        guard let usage = model.messages.last(where: {
+            $0.origin == .agent && $0.usage != nil
+        })?.usage else { return nil }
+        let parts = [usage.inputTokens, usage.cacheReadTokens, usage.cacheWriteTokens]
+            .compactMap { $0 }
+        return parts.isEmpty ? nil : parts.reduce(0, +)
+    }
 
     var body: some View {
         SettingsForm(title: "Usage") {
@@ -232,6 +242,23 @@ private struct UsageSettingsView: View {
             if let loadError {
                 Section { Text(loadError).foregroundStyle(.red) }
             } else if let summary {
+                if let session = model.selectedSession {
+                    Section("Selected session context") {
+                        LabeledContent("Session", value: session.title ?? "Untitled session")
+                        LabeledContent("Latest reported input", value: formatted(latestPromptTokens))
+                        LabeledContent("Model context window", value: formatted(selectedContextWindow))
+                        if let used = latestPromptTokens, let limit = selectedContextWindow, limit > 0 {
+                            ProgressView(value: Double(min(used, limit)), total: Double(limit))
+                            Text("\(max(0, limit - used).formatted()) tokens remaining before model overhead")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("The provider has not reported enough data to estimate remaining context for this session.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Section("Token usage") {
                     LabeledContent("Total", value: formatted(summary.totals.totalTokens))
                     LabeledContent("Input", value: formatted(summary.totals.usage.inputTokens))
@@ -268,6 +295,18 @@ private struct UsageSettingsView: View {
                 guard !Task.isCancelled else { return }
                 loadError = error.localizedDescription
             }
+        }
+        .task(id: model.selectedSessionID) {
+            selectedContextWindow = nil
+            guard let session = model.selectedSession,
+                  let modelID = session.modelID else { return }
+            let provider = model.selectedProvider
+            let backendID = session.backendID?.rawValue ?? "local"
+            let catalog = await Task.detached {
+                ProviderModelDiscovery.models(for: provider, backendID: backendID)
+            }.value
+            guard !Task.isCancelled else { return }
+            selectedContextWindow = catalog.models.first { $0.id == modelID }?.contextWindowTokens
         }
     }
 

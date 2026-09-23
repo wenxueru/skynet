@@ -116,4 +116,60 @@ struct CodexThreadArchiveTests {
         }
         #expect(backend.launchedProcesses.first?.wasTerminated == true)
     }
+
+    @Test func archiveTimeoutAcceptsConfirmedNativeState() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, _ in }),
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{"thread":{"path":"/Users/test/.codex/archived_sessions/rollout-123.jsonl"}}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        try await CodexThreadArchive.setArchived(
+            true, threadID: "thread-123", backend: backend,
+            timeout: .milliseconds(10)
+        )
+
+        #expect(backend.launchedRequests.count == 2)
+        let verification = String(decoding: try #require(backend.launchedProcesses.last?.stdinWrites.first), as: UTF8.self)
+        let frames = verification.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
+        #expect(frames.last?["method"]?.stringValue == "thread/read")
+    }
+
+    @Test func archiveTimeoutRejectsUnchangedNativeState() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, _ in }),
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{"thread":{"path":"/Users/test/.codex/sessions/rollout-123.jsonl"}}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        await #expect(throws: SkynetError.self) {
+            try await CodexThreadArchive.setArchived(
+                true, threadID: "thread-123", backend: backend,
+                timeout: .milliseconds(10)
+            )
+        }
+    }
+
+    @Test func alreadyArchivedLocalRolloutNeedsNoSecondMutation() async throws {
+        let directory = try TempDirectory()
+        let archive = directory.url.appendingPathComponent("archived_sessions")
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        let threadID = "10000000-0000-4000-8000-000000000001"
+        let rollout = archive.appendingPathComponent("rollout-2026-09-23-\(threadID).jsonl")
+        try Data().write(to: rollout)
+        let backend = ScriptedExecutionBackend()
+
+        try await CodexThreadArchive.setArchived(
+            true, threadID: threadID, backend: backend,
+            environment: ["CODEX_HOME": directory.url.path]
+        )
+
+        #expect(backend.launchedRequests.isEmpty)
+    }
 }

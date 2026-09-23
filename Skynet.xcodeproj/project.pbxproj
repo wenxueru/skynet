@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A12B00000000000000000001 /* IntegratedTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12B00000000000000000002 /* IntegratedTerminalView.swift */; };
+		A12B00000000000000000003 /* TerminalAssets in Resources */ = {isa = PBXBuildFile; fileRef = A12B00000000000000000004 /* TerminalAssets */; };
+		A12B00000000000000000005 /* SessionFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12B00000000000000000006 /* SessionFilesView.swift */; };
 		02501773126D58D690BBA46F /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80FCC824B9D59C2FD006B6B6 /* SessionListView.swift */; };
 		06F6D83CDD03210FD3A6329F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 900761CC2A6A82205C2B8AC4 /* Assets.xcassets */; };
 		07F33B24514764EFB1EC01E6 /* Machine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C3F1EDB52D2E3143E96D32 /* Machine.swift */; };
@@ -110,6 +113,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A12B00000000000000000002 /* IntegratedTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegratedTerminalView.swift; sourceTree = "<group>"; };
+		A12B00000000000000000004 /* TerminalAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = TerminalAssets; sourceTree = "<group>"; };
+		A12B00000000000000000006 /* SessionFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionFilesView.swift; sourceTree = "<group>"; };
 		00024EED10F2C0B8D0D1EEA2 /* PreviewData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewData.swift; sourceTree = "<group>"; };
 		02B5A7D0488F8234E296514C /* AppActivityState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppActivityState.swift; sourceTree = "<group>"; };
 		051F2EF0638A8239EF522CF8 /* SessionIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIndex.swift; sourceTree = "<group>"; };
@@ -437,6 +443,9 @@
 			isa = PBXGroup;
 			children = (
 				18671EDFB791DB653FB2AAAA /* AppModel.swift */,
+				A12B00000000000000000002 /* IntegratedTerminalView.swift */,
+				A12B00000000000000000004 /* TerminalAssets */,
+				A12B00000000000000000006 /* SessionFilesView.swift */,
 				D893EB23624D3E570C336E32 /* AppPreferences.swift */,
 				88099F57EF95077FF3554C47 /* Assets.xcassets */,
 				3302FC1017A47AFC26FE66FF /* ComposerTextView.swift */,
@@ -617,6 +626,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8770BBB7754DC9817F552BA0 /* Assets.xcassets in Resources */,
+				A12B00000000000000000003 /* TerminalAssets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -711,6 +721,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				3FD88A56309BFEDDF654355C /* AppModel.swift in Sources */,
+				A12B00000000000000000001 /* IntegratedTerminalView.swift in Sources */,
+				A12B00000000000000000005 /* SessionFilesView.swift in Sources */,
 				90D06887C16F8B7BEBF57040 /* AppPreferences.swift in Sources */,
 				95B2F486474CB0C523008AAF /* ComposerTextView.swift in Sources */,
 				A969F3C8314542F3F1C30C87 /* ContentView.swift in Sources */,

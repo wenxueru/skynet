@@ -5,6 +5,7 @@ import SwiftUI
 struct TranscriptMessageView: View {
     let message: Message
     let imageData: (ImageAttachment) -> Data?
+    let onQuote: (String) -> Void
     @AppStorage(AppPreferenceKey.showTimestamps) private var showTimestamps = true
 
     var body: some View {
@@ -24,16 +25,43 @@ struct TranscriptMessageView: View {
                 .background(message.origin == .user ? Color.accentColor.opacity(0.14) : .clear)
                 .clipShape(.rect(topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 5, topTrailingRadius: 16))
 
-                if showTimestamps || message.modelID != nil || message.usage?.totalTokens != nil {
-                    MessageMetadata(message: message)
+                HStack(spacing: 8) {
+                    if showTimestamps || message.modelID != nil || message.usage?.totalTokens != nil {
+                        MessageMetadata(message: message)
+                    }
+                    Menu {
+                        messageActions
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Message actions")
                 }
             }
             .contextMenu {
-                if !message.plainText.isEmpty {
-                    Button("Copy") { NSPasteboard.general.setString(message.plainText) }
-                }
+                messageActions
             }
             if message.origin != .user { Spacer(minLength: 96) }
+        }
+    }
+
+    @ViewBuilder
+    private var messageActions: some View {
+        if !message.plainText.isEmpty {
+            Button("Copy text") { NSPasteboard.general.setString(message.plainText) }
+            Button("Quote in composer") {
+                onQuote(message.plainText.split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { "> \($0)" }.joined(separator: "\n"))
+            }
+            ShareLink(item: message.plainText) {
+                Label("Share text…", systemImage: "square.and.arrow.up")
+            }
+        }
+        Button("Copy message ID") {
+            NSPasteboard.general.setString(message.id.description)
         }
     }
 }
@@ -574,9 +602,7 @@ private struct ToolCallCard: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: binding) {
-            Text(formattedInput)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
+            ToolCallDetailView(call: call, fallback: formattedInput)
                 .padding(.top, 8)
         } label: {
             HStack(spacing: 9) {
@@ -596,21 +622,147 @@ private struct ToolCallCard: View {
     private var binding: Binding<Bool> { expansionBinding($expanded, fallback: expandByDefault) }
 }
 
+private struct ToolCallDetailView: View {
+    let call: ToolCall
+    let fallback: String
+
+    private var name: String { call.name.lowercased() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if let plan = call.input["plan"]?.arrayValue, !plan.isEmpty {
+                ForEach(plan.indices, id: \.self) { index in
+                    let item = plan[index]
+                    Label {
+                        Text(item["step"]?.stringValue ?? item["content"]?.stringValue ?? "Step \(index + 1)")
+                    } icon: {
+                        Image(systemName: item["status"]?.stringValue == "completed"
+                              ? "checkmark.circle.fill" : "circle")
+                    }
+                    .font(.caption)
+                }
+            } else if let questions = call.input["questions"]?.arrayValue, !questions.isEmpty {
+                ForEach(questions.indices, id: \.self) { index in
+                    let question = questions[index]
+                    Text(question["question"]?.stringValue ?? "Question \(index + 1)")
+                        .font(.caption.weight(.semibold))
+                    if let options = question["options"]?.arrayValue {
+                        ForEach(options.indices, id: \.self) { optionIndex in
+                            Text("• " + (options[optionIndex]["label"]?.stringValue ?? "Option"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else if let old = call.input["old_string"]?.stringValue,
+                      let new = call.input["new_string"]?.stringValue {
+                diffBlock(old, color: .red, prefix: "−")
+                diffBlock(new, color: .green, prefix: "+")
+            } else if let edits = call.input["edits"]?.arrayValue, !edits.isEmpty {
+                ForEach(edits.indices, id: \.self) { index in
+                    let edit = edits[index]
+                    Text("Edit \(index + 1)").font(.caption.weight(.semibold))
+                    if let old = edit["old_string"]?.stringValue {
+                        diffBlock(old, color: .red, prefix: "−")
+                    }
+                    if let new = edit["new_string"]?.stringValue {
+                        diffBlock(new, color: .green, prefix: "+")
+                    }
+                }
+            } else if let changes = call.input["changes"]?.objectValue, !changes.isEmpty {
+                ForEach(changes.keys.sorted(), id: \.self) { path in
+                    Label(path, systemImage: "doc.badge.ellipsis")
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                    if let patch = changes[path]?.stringValue {
+                        diffBlock(patch, color: .secondary, prefix: "")
+                    }
+                }
+            } else if let patch = call.input["unified_diff"]?.stringValue
+                        ?? call.input["patch"]?.stringValue
+                        ?? call.input["patches"]?.stringValue {
+                let lines = patch.split(separator: "\n", omittingEmptySubsequences: false)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        let text = String(lines[index])
+                        Text(text.isEmpty ? " " : text)
+                            .foregroundStyle(text.hasPrefix("+") ? .green
+                                : text.hasPrefix("-") ? .red : .secondary)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(7)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+            } else if let prompt = call.input["prompt"]?.stringValue,
+                      name.contains("task") || name.contains("agent") {
+                Text(prompt)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            } else if let command = call.input["command"]?.stringValue
+                        ?? call.input["cmd"]?.stringValue {
+                Text("$ " + command)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            } else {
+                Text(fallback)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func diffBlock(_ text: String, color: Color, prefix: String) -> some View {
+        ScrollView(.horizontal) {
+            Text(prefix + text)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(color)
+                .textSelection(.enabled)
+        }
+        .padding(7)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 private struct ToolResultCard: View {
     let content: String
     let isError: Bool
     @AppStorage(AppPreferenceKey.expandTools) private var expandByDefault = false
     @State private var expanded: Bool?
+    @State private var showsFullOutput = false
+
+    private var isLong: Bool { content.count > 8_000 }
+    private var visibleOutput: String {
+        isLong && !showsFullOutput ? String(content.prefix(6_000)) + "\n…" : content
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: binding) {
-            ScrollView(.horizontal) {
-                Text(content)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    if isLong {
+                        Button(showsFullOutput ? "Show less" : "Show full output") {
+                            showsFullOutput.toggle()
+                        }
+                    }
+                    Spacer()
+                    Button("Copy output", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(content, forType: .string)
+                    }
+                    .labelStyle(.iconOnly)
+                }
+                .font(.caption2)
+                ScrollView(.horizontal) {
+                    Text(visibleOutput)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(isError ? .red : .primary)
                     .textSelection(.enabled)
-                    .padding(.top, 8)
+                }
             }
+            .padding(.top, 8)
         } label: {
             Label(isError ? "Tool failed" : "Tool completed", systemImage: isError ? "xmark.circle" : "checkmark.circle")
                 .font(.caption.weight(.medium))
@@ -723,6 +875,14 @@ private struct ToolSummary {
             icon = "terminal"
             title = "Run command"
             subtitle = command?.split(whereSeparator: \.isNewline).first.map(String.init)
+        } else if name.contains("plan") || name.contains("todo") {
+            icon = "checklist"
+            title = "Plan"
+            subtitle = call.input["plan"]?.arrayValue.map { "\($0.count) steps" }
+        } else if name.contains("question") || name.contains("input") {
+            icon = "questionmark.bubble"
+            title = "Asked a question"
+            subtitle = nil
         } else if name.contains("wait") {
             icon = "hourglass"
             title = "Wait for result"

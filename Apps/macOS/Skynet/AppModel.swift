@@ -6,6 +6,28 @@ import SkynetCore
 @MainActor
 @Observable
 final class AppModel {
+    struct ScratchlistEntry: Codable, Identifiable {
+        var id = UUID()
+        var text: String
+        var attachments: [ImageAttachment]
+        var createdAt = Date()
+    }
+
+    struct QueuedPrompt: Codable, Identifiable {
+        var id = UUID()
+        var text: String
+        var attachments: [ImageAttachment]
+        var createdAt = Date()
+        var scheduledAt: Date? = nil
+        /// A persisted dispatch marker prevents an uncertain send from being replayed.
+        var dispatchStartedAt: Date? = nil
+    }
+
+    struct ComposerDraft: Codable {
+        var text: String
+        var attachments: [ImageAttachment]
+    }
+
     struct LiveTool: Identifiable {
         var id: ToolCallID
         var name: String
@@ -36,7 +58,11 @@ final class AppModel {
     var workingSince: Date?
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
+    var scratchlist: [ScratchlistEntry] = []
+    var queuedPrompts: [QueuedPrompt] = []
+    var scheduledDispatchingSessionID: SessionID? { scheduledDispatchSessionID }
     var pendingPermissionRequest: PermissionRequest?
+    var pendingPermissionSessionTitle: String?
     var machines: [DiscoveredMachine] = [.local]
     var disabledMachineIDs: Set<BackendID>
     private var deletedDiscoveryKeys: Set<DiscoverySessionKey>
@@ -51,6 +77,10 @@ final class AppModel {
     private var discoveryTask: Task<Void, Never>?
     private var transcriptTask: Task<Void, Never>?
     private var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
+    private var scheduleTimer: Task<Void, Never>?
+    private var scheduledDispatch: Task<Void, Never>?
+    private var scheduledDispatchSessionID: SessionID?
+    private var scheduledQueueSessionIDs: Set<SessionID> = []
 
     private static let disabledMachinesKey = "disabledMachineIDs"
     private static let deletedDiscoveryKeysKey = "deletedDiscoveryKeys"
@@ -75,6 +105,12 @@ final class AppModel {
             store = try JSONDiskStore(rootURL: storageURL)
             load()
             refreshDiscovery()
+            scheduleTimer = Task { [weak self] in
+                while !Task.isCancelled {
+                    self?.deliverMatureScheduledMessage()
+                    try? await Task.sleep(for: .seconds(5))
+                }
+            }
         } catch {
             store = nil
             errorMessage = "Unable to initialize Skynet storage: \(error.localizedDescription)"
@@ -165,6 +201,11 @@ final class AppModel {
         do {
             projects = try store.loadProjects().sorted { $0.updatedAt > $1.updatedAt }
             sessions = try store.loadSessions(matching: nil)
+            scheduledQueueSessionIDs = Set(sessions.compactMap { session in
+                queueEntries(for: session.id).contains(where: {
+                    $0.scheduledAt != nil && $0.dispatchStartedAt == nil
+                }) ? session.id : nil
+            })
             providers = try ProviderCatalog.effective(
                 userConfigured: store.loadUserProviders()
             ).providers
@@ -174,6 +215,8 @@ final class AppModel {
             }
             if let selectedSessionID {
                 messages = try store.loadMessages(for: selectedSessionID)
+                loadScratchlist(for: selectedSessionID)
+                loadQueue(for: selectedSessionID)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -210,12 +253,16 @@ final class AppModel {
         } else {
             selectedSessionID = nil
             messages = []
+            scratchlist = []
+            queuedPrompts = []
         }
     }
 
     func select(session: SessionRecord) {
         selectedProjectID = session.projectID
         selectedSessionID = session.id
+        loadScratchlist(for: session.id)
+        loadQueue(for: session.id)
         if session.markedUnreadAt != nil {
             var updated = session
             updated.markedUnreadAt = nil
@@ -318,6 +365,8 @@ final class AppModel {
         transcriptTask?.cancel()
         transcriptTask = nil
         messages = []
+        scratchlist = []
+        queuedPrompts = []
         isLoadingTranscript = false
         resetLiveState()
     }
@@ -327,7 +376,8 @@ final class AppModel {
         var deleted: Set<SessionID> = []
         var failures: [String] = []
         for session in sessions where ids.contains(session.id) {
-            if isRunning && selectedSessionID == session.id {
+            if (isRunning && selectedSessionID == session.id)
+                || scheduledDispatchSessionID == session.id {
                 failures.append("Stop \(session.title ?? "the running session") before deleting it.")
                 continue
             }
@@ -374,6 +424,10 @@ final class AppModel {
             errorMessage = "Stop the running session before deleting it."
             return false
         }
+        if let scheduledDispatchSessionID, ids.contains(scheduledDispatchSessionID) {
+            errorMessage = "Wait for the scheduled message to finish before deleting this session."
+            return false
+        }
         do {
             let store = try requireStore()
             let deleted = sessions.filter { ids.contains($0.id) }
@@ -407,6 +461,12 @@ final class AppModel {
             if let selectedSessionID, ids.contains(selectedSessionID) {
                 clearSessionSelection()
             }
+            for id in ids {
+                if let url = scratchlistURL(for: id) { try? FileManager.default.removeItem(at: url) }
+                if let url = queueURL(for: id) { try? FileManager.default.removeItem(at: url) }
+                if let url = composerDraftURL(for: id) { try? FileManager.default.removeItem(at: url) }
+            }
+            scheduledQueueSessionIDs.subtract(ids)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -518,6 +578,10 @@ final class AppModel {
         let ids = Set(sessions(for: project).map(\.id))
         if isRunning, let selectedSessionID, ids.contains(selectedSessionID) {
             errorMessage = "Stop the running session before removing its project."
+            return
+        }
+        if let scheduledDispatchSessionID, ids.contains(scheduledDispatchSessionID) {
+            errorMessage = "Wait for the scheduled message to finish before removing its project."
             return
         }
         guard removeCachedSessions(ids) else { return }
@@ -667,6 +731,7 @@ final class AppModel {
         )
         permissionContinuation = nil
         pendingPermissionRequest = nil
+        pendingPermissionSessionTitle = nil
     }
 
     func attachImage(url: URL) {
@@ -706,10 +771,327 @@ final class AppModel {
         pendingAttachments.removeAll { $0.id == id }
     }
 
-    func send(_ prompt: String) {
+    func moveAttachment(_ id: UUID, by offset: Int) {
+        guard let index = pendingAttachments.firstIndex(where: { $0.id == id }),
+              pendingAttachments.indices.contains(index + offset) else { return }
+        pendingAttachments.swapAt(index, index + offset)
+    }
+
+    func parkDraft(_ text: String) -> Bool {
+        guard let sessionID = selectedSessionID else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
+        guard scratchlist.count < 200 else {
+            errorMessage = "Scratchlist is full (200 entries)."
+            return false
+        }
+        do {
+            let attachments = try storedAttachments(pendingAttachments)
+            let entry = ScratchlistEntry(
+                text: String(trimmed.prefix(10_000)), attachments: attachments
+            )
+            var updated = scratchlist
+            updated.insert(entry, at: 0)
+            try persistScratchlist(updated, for: sessionID)
+            scratchlist = updated
+            pendingAttachments = []
+            return true
+        } catch {
+            errorMessage = "Could not save Scratchlist: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func enqueueDraft(_ text: String, scheduledAt: Date? = nil) -> Bool {
+        guard let sessionID = selectedSessionID else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
+        if let scheduledAt {
+            guard scheduledAt > Date(), scheduledAt <= Date().addingTimeInterval(7 * 86_400) else {
+                errorMessage = "Scheduled time must be within the next 7 days."
+                return false
+            }
+            guard pendingAttachments.isEmpty else {
+                errorMessage = "Scheduled messages cannot include images."
+                return false
+            }
+        }
+        guard queuedPrompts.count < 100 else {
+            errorMessage = "Message queue is full (100 entries)."
+            return false
+        }
+        do {
+            let entry = QueuedPrompt(
+                text: trimmed, attachments: try storedAttachments(pendingAttachments),
+                scheduledAt: scheduledAt
+            )
+            var updated = queuedPrompts
+            updated.append(entry)
+            try persistQueue(updated, for: sessionID)
+            queuedPrompts = updated
+            pendingAttachments = []
+            if scheduledAt == nil, !isRunning { sendNextQueued(for: sessionID) }
+            return true
+        } catch {
+            errorMessage = "Could not queue message: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func removeQueuedPrompt(_ id: UUID) {
+        guard let sessionID = selectedSessionID else { return }
+        guard !(scheduledDispatchSessionID == sessionID
+            && queuedPrompts.contains(where: { $0.id == id && $0.dispatchStartedAt != nil })) else {
+            errorMessage = "This scheduled message is currently sending."
+            return
+        }
+        removeQueuedPrompt(id, for: sessionID)
+    }
+
+    func takeQueuedPrompt(_ id: UUID) -> QueuedPrompt? {
+        guard let sessionID = selectedSessionID,
+              let entry = queuedPrompts.first(where: { $0.id == id }) else { return nil }
+        guard !(entry.dispatchStartedAt != nil && scheduledDispatchSessionID == sessionID) else {
+            errorMessage = "This scheduled message is currently sending."
+            return nil
+        }
+        let updated = queuedPrompts.filter { $0.id != id }
+        do {
+            try persistQueue(updated, for: sessionID)
+            queuedPrompts = updated
+            return entry
+        } catch {
+            errorMessage = "Could not edit queued message: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    private func removeQueuedPrompt(_ id: UUID, for sessionID: SessionID) {
+        let current = selectedSessionID == sessionID
+            ? queuedPrompts
+            : queueEntries(for: sessionID)
+        let updated = current.filter { $0.id != id }
+        do {
+            try persistQueue(updated, for: sessionID)
+            if selectedSessionID == sessionID { queuedPrompts = updated }
+        } catch {
+            errorMessage = "Could not update queue: \(error.localizedDescription)"
+        }
+    }
+
+    private func storedAttachments(_ attachments: [ImageAttachment]) throws -> [ImageAttachment] {
+        try attachments.map { attachment in
+            var stored = attachment
+            if case .inline(let data, let mediaType) = stored.payload {
+                guard let store else { throw CocoaError(.fileNoSuchFile) }
+                stored.payload = .blob(try store.storeBlob(
+                    data, mediaType: mediaType, fileName: stored.fileName
+                ))
+            }
+            return stored
+        }
+    }
+
+    func saveComposerDraft(_ text: String, attachments: [ImageAttachment], for sessionID: SessionID) {
+        guard let url = composerDraftURL(for: sessionID) else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            let draft = ComposerDraft(text: text, attachments: try storedAttachments(attachments))
+            try JSONEncoder().encode(draft).write(to: url, options: .atomic)
+        } catch {
+            errorMessage = "Could not save composer draft: \(error.localizedDescription)"
+        }
+    }
+
+    func loadComposerDraft(for sessionID: SessionID) -> ComposerDraft? {
+        guard let url = composerDraftURL(for: sessionID),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ComposerDraft.self, from: data)
+    }
+
+    private func composerDraftURL(for sessionID: SessionID) -> URL? {
+        storageDirectoryURL?
+            .appendingPathComponent("composer-drafts", isDirectory: true)
+            .appendingPathComponent("\(sessionID.value.uuidString).json")
+    }
+
+    private func queueURL(for sessionID: SessionID) -> URL? {
+        storageDirectoryURL?
+            .appendingPathComponent("message-queues", isDirectory: true)
+            .appendingPathComponent("\(sessionID.value.uuidString).json")
+    }
+
+    private func loadQueue(for sessionID: SessionID) {
+        queuedPrompts = queueEntries(for: sessionID)
+    }
+
+    private func queueEntries(for sessionID: SessionID) -> [QueuedPrompt] {
+        guard let url = queueURL(for: sessionID),
+              let data = try? Data(contentsOf: url),
+              let entries = try? JSONDecoder().decode([QueuedPrompt].self, from: data) else {
+            return []
+        }
+        return Array(entries.prefix(100))
+    }
+
+    private func persistQueue(_ entries: [QueuedPrompt], for sessionID: SessionID) throws {
+        guard let url = queueURL(for: sessionID) else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(entries).write(to: url, options: .atomic)
+        if entries.contains(where: { $0.scheduledAt != nil && $0.dispatchStartedAt == nil }) {
+            scheduledQueueSessionIDs.insert(sessionID)
+        } else {
+            scheduledQueueSessionIDs.remove(sessionID)
+        }
+    }
+
+    func sendNextQueued(for sessionID: SessionID) {
+        guard !isRunning, scheduledDispatchSessionID != sessionID,
+              selectedSessionID == sessionID,
+              let entry = queuedPrompts.first(where: {
+                  $0.scheduledAt == nil && $0.dispatchStartedAt == nil
+              }) else { return }
+        let composerAttachments = pendingAttachments
+        pendingAttachments = entry.attachments
+        send(entry.text, queuedEntry: entry)
+        pendingAttachments.insert(contentsOf: composerAttachments, at: 0)
+    }
+
+    private func deliverMatureScheduledMessage() {
+        guard scheduledDispatch == nil, !isRunning, let store else { return }
+        let now = Date()
+        let due = sessions.compactMap { record -> (SessionRecord, QueuedPrompt)? in
+            guard scheduledQueueSessionIDs.contains(record.id) else { return nil }
+            guard !(selectedSessionID == record.id && isRunning), record.status != .running,
+                  let entry = queueEntries(for: record.id).first(where: {
+                      ($0.scheduledAt ?? .distantFuture) <= now && $0.dispatchStartedAt == nil
+                  }) else { return nil }
+            return (record, entry)
+        }.min { ($0.1.scheduledAt ?? .distantFuture) < ($1.1.scheduledAt ?? .distantFuture) }
+        guard let (record, entry) = due,
+              let provider = providers.first(where: { $0.id == record.providerID }) else { return }
+        scheduledDispatchSessionID = record.id
+        scheduledDispatch = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                scheduledDispatch = nil
+                scheduledDispatchSessionID = nil
+                deliverMatureScheduledMessage()
+            }
+            do {
+                var queue = queueEntries(for: record.id)
+                guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
+                queue[index].dispatchStartedAt = Date()
+                try persistQueue(queue, for: record.id)
+                if selectedSessionID == record.id { queuedPrompts = queue }
+
+                let agent = try AgentSession(
+                    record: record,
+                    configuration: .init(
+                        provider: provider,
+                        backend: executionBackend(for: record),
+                        permissions: PermissionPolicy(defaultEffect: record.permissionEffect ?? .ask),
+                        permissionResponder: AppPermissionResponder { [weak self] request in
+                            guard let self else {
+                                return PermissionResponse(requestID: request.id, decision: .deny)
+                            }
+                            return await self.requestPermission(
+                                request, sessionTitle: record.title ?? "Scheduled session"
+                            )
+                        },
+                        store: store
+                    )
+                )
+                try await agent.loadPersistedTranscript()
+                let stream = try await agent.send(entry.text)
+                for try await _ in stream {}
+                removeQueuedPrompt(entry.id, for: record.id)
+                var updated = await agent.record
+                if selectedSessionID != record.id { updated.markedUnreadAt = Date() }
+                try store.saveSession(updated)
+                replace(updated)
+                if selectedSessionID == record.id { loadTranscript(for: record.id) }
+            } catch {
+                errorMessage = "Scheduled message needs review: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func removeScratchlistEntry(_ id: UUID) {
+        guard let sessionID = selectedSessionID else { return }
+        let updated = scratchlist.filter { $0.id != id }
+        do {
+            try persistScratchlist(updated, for: sessionID)
+            scratchlist = updated
+        } catch {
+            errorMessage = "Could not update Scratchlist: \(error.localizedDescription)"
+        }
+    }
+
+    func updateScratchlistEntry(_ id: UUID, text: String) {
+        guard let sessionID = selectedSessionID,
+              let index = scratchlist.firstIndex(where: { $0.id == id }) else { return }
+        var updated = scratchlist
+        updated[index].text = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(10_000))
+        do {
+            try persistScratchlist(updated, for: sessionID)
+            scratchlist = updated
+        } catch {
+            errorMessage = "Could not update Scratchlist: \(error.localizedDescription)"
+        }
+    }
+
+    func moveScratchlistEntry(_ id: UUID, by offset: Int) {
+        guard let sessionID = selectedSessionID,
+              let index = scratchlist.firstIndex(where: { $0.id == id }),
+              scratchlist.indices.contains(index + offset) else { return }
+        var updated = scratchlist
+        updated.swapAt(index, index + offset)
+        do {
+            try persistScratchlist(updated, for: sessionID)
+            scratchlist = updated
+        } catch {
+            errorMessage = "Could not reorder Scratchlist: \(error.localizedDescription)"
+        }
+    }
+
+    private func scratchlistURL(for sessionID: SessionID) -> URL? {
+        storageDirectoryURL?
+            .appendingPathComponent("scratchlists", isDirectory: true)
+            .appendingPathComponent("\(sessionID.value.uuidString).json")
+    }
+
+    private func loadScratchlist(for sessionID: SessionID) {
+        guard let url = scratchlistURL(for: sessionID),
+              let data = try? Data(contentsOf: url),
+              let entries = try? JSONDecoder().decode([ScratchlistEntry].self, from: data) else {
+            scratchlist = []
+            return
+        }
+        scratchlist = Array(entries.prefix(200))
+    }
+
+    private func persistScratchlist(_ entries: [ScratchlistEntry], for sessionID: SessionID) throws {
+        guard let url = scratchlistURL(for: sessionID) else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(entries).write(to: url, options: .atomic)
+    }
+
+    func send(_ prompt: String, queuedEntry: QueuedPrompt? = nil) {
         guard !isRunning, let store, let record = selectedSession,
               let provider = providers.first(where: { $0.id == record.providerID }) else { return }
+        guard scheduledDispatchSessionID != record.id else {
+            errorMessage = "A scheduled message is already sending in this session."
+            return
+        }
         let attachments = pendingAttachments
+        let referenceSessions = sessions
         pendingAttachments = []
         resetLiveState()
         isRunning = true
@@ -720,11 +1102,13 @@ final class AppModel {
         streamTask = Task { [weak self] in
             guard let self else { return }
             var didStartTurn = false
+            var completedTurn = false
             defer {
                 isRunning = false
                 workingSince = nil
                 activeSession = nil
                 streamTask = nil
+                if completedTurn { sendNextQueued(for: record.id) }
             }
             do {
                 let session = try AgentSession(
@@ -756,18 +1140,27 @@ final class AppModel {
                 )
                 activeSession = session
                 try await session.loadPersistedTranscript()
-                let stream = try await session.send(prompt, attachments: attachments)
+                let expandedPrompt = await Task.detached(priority: .userInitiated) {
+                    SessionReferenceContext.expand(prompt, sessions: referenceSessions) { id in
+                        try? store.loadMessages(for: id)
+                    }
+                }.value
+                let stream = try await session.send(expandedPrompt, attachments: attachments)
                 didStartTurn = true
+                if let queuedEntry { removeQueuedPrompt(queuedEntry.id, for: record.id) }
                 for try await event in stream {
                     apply(event)
                 }
                 let updated = await session.record
                 replace(updated)
                 messages = try store.loadMessages(for: updated.id)
+                completedTurn = true
             } catch {
                 errorMessage = error.localizedDescription
                 if !didStartTurn {
-                    pendingAttachments.insert(contentsOf: attachments, at: 0)
+                    if queuedEntry == nil {
+                        pendingAttachments.insert(contentsOf: attachments, at: 0)
+                    }
                 }
             }
         }
@@ -904,6 +1297,7 @@ final class AppModel {
                     providerResumeToken: discovered.providerSessionID
                 )
                 let previousUpdatedAt = record.updatedAt
+                let previousMessageCount = record.messageCount
                 record.projectID = project.id
                 record.modelID = record.modelID ?? discovered.modelID
                 record.backendID = snapshot.machine.id
@@ -914,9 +1308,20 @@ final class AppModel {
                     record.totalUsage = discovered.totalUsage
                 }
                 if record.title == nil { record.title = discovered.title }
+                let isRemote = snapshot.machine.id != DiscoveredMachine.local.id
                 let shouldReplaceMessages = existingIndex == nil
-                    || record.messageCount != discovered.messages.count
-                    || previousUpdatedAt < discovered.updatedAt
+                    || (isRemote
+                        ? discovered.messages.count > record.messageCount
+                        : record.messageCount != discovered.messages.count
+                            || previousUpdatedAt < discovered.updatedAt)
+                if existingIndex != nil,
+                   selectedSessionID != record.id,
+                   discovered.messages.count > previousMessageCount,
+                   discovered.messages.dropFirst(previousMessageCount).contains(where: {
+                       $0.origin == .agent && !$0.plainText.isEmpty
+                   }) {
+                    record.markedUnreadAt = discovered.updatedAt
+                }
                 var needsImageUpgrade = false
                 if !shouldReplaceMessages,
                    discovered.messages.contains(where: Self.containsImage) {
@@ -1018,7 +1423,9 @@ final class AppModel {
         liveTools = []
     }
 
-    private func requestPermission(_ request: PermissionRequest) async -> PermissionResponse {
+    private func requestPermission(
+        _ request: PermissionRequest, sessionTitle: String? = nil
+    ) async -> PermissionResponse {
         if let pendingPermissionRequest {
             permissionContinuation?.resume(
                 returning: PermissionResponse(
@@ -1030,6 +1437,7 @@ final class AppModel {
         }
         return await withCheckedContinuation { continuation in
             pendingPermissionRequest = request
+            pendingPermissionSessionTitle = sessionTitle
             permissionContinuation = continuation
         }
     }
@@ -1047,6 +1455,9 @@ final class AppModel {
         }
         isLoadingTranscript = true
         messages = []
+        let remoteRecord = sessions.first {
+            $0.id == sessionID && $0.backendID?.rawValue.hasPrefix("ssh:") == true
+        }
         transcriptTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
                 do {
@@ -1064,6 +1475,42 @@ final class AppModel {
             guard let self, !Task.isCancelled, selectedSessionID == sessionID else { return }
             messages = result.messages
             errorMessage = result.errorMessage
+            if let remoteRecord, remoteRecord.backendID?.rawValue.hasPrefix("ssh:") == true {
+                do {
+                    if let imported = try await RemoteSessionDiscovery.fullTranscript(for: remoteRecord),
+                       imported.messages.count >= result.messages.count {
+                        let storedMessages = try await Task.detached(priority: .userInitiated) {
+                            let normalized = try imported.messages.map { message in
+                                var stored = message
+                                stored.content = try message.content.map { block in
+                                    guard case .image(var attachment) = block,
+                                          case .inline(let data, let mediaType) = attachment.payload else {
+                                        return block
+                                    }
+                                    attachment.payload = .blob(try store.storeBlob(
+                                        data, mediaType: mediaType, fileName: attachment.fileName
+                                    ))
+                                    return .image(attachment)
+                                }
+                                return stored
+                            }
+                            try store.replaceMessages(normalized, for: sessionID)
+                            return normalized
+                        }.value
+                        guard !Task.isCancelled, selectedSessionID == sessionID else { return }
+                        messages = storedMessages
+                        var updated = remoteRecord
+                        updated.messageCount = storedMessages.count
+                        updated.totalUsage = imported.totalUsage
+                        updated.updatedAt = max(updated.updatedAt, imported.updatedAt)
+                        save(updated)
+                    }
+                } catch {
+                    guard !Task.isCancelled, selectedSessionID == sessionID else { return }
+                    errorMessage = "Remote history could not be fully loaded: \(error.localizedDescription)"
+                }
+            }
+            guard !Task.isCancelled, selectedSessionID == sessionID else { return }
             isLoadingTranscript = false
             transcriptTask = nil
         }
