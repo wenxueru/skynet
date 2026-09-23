@@ -34,6 +34,7 @@ final class AppModel {
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
     var machines: [DiscoveredMachine] = [.local]
+    var disabledMachineIDs: Set<BackendID>
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
     var isLoadingTranscript = false
@@ -45,7 +46,13 @@ final class AppModel {
     private var discoveryTask: Task<Void, Never>?
     private var transcriptTask: Task<Void, Never>?
 
+    private static let disabledMachinesKey = "disabledMachineIDs"
+
     init() {
+        disabledMachineIDs = Set(
+            (UserDefaults.standard.stringArray(forKey: Self.disabledMachinesKey) ?? [])
+                .map { BackendID($0) }
+        )
         do {
             let base = try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -75,6 +82,10 @@ final class AppModel {
     var selectedProvider: AgentProviderDescriptor? {
         guard let selectedSession else { return nil }
         return providers.first { $0.id == selectedSession.providerID }
+    }
+
+    var visibleMachines: [DiscoveredMachine] {
+        machines.filter { !disabledMachineIDs.contains($0.id) }
     }
 
     private var normalizedSearchText: String {
@@ -118,8 +129,9 @@ final class AppModel {
         isDiscovering = true
         discoveryTask?.cancel()
         discoveryTask = Task { [weak self] in
-            let snapshots = await MacSessionDiscovery.discover()
-            guard let self, !Task.isCancelled else { return }
+            guard let self else { return }
+            let snapshots = await MacSessionDiscovery.discover(excluding: self.disabledMachineIDs)
+            guard !Task.isCancelled else { return }
             do {
                 try mergeDiscovery(snapshots)
             } catch {
@@ -188,6 +200,57 @@ final class AppModel {
         selectedSessionID = session.id
         resetLiveState()
         loadTranscript(for: session.id)
+    }
+
+    func clearSessionSelection() {
+        selectedSessionID = nil
+        transcriptTask?.cancel()
+        transcriptTask = nil
+        messages = []
+        isLoadingTranscript = false
+        resetLiveState()
+    }
+
+    func deleteSessions(_ ids: Set<SessionID>) {
+        guard !ids.isEmpty else { return }
+        do {
+            let store = try requireStore()
+            for id in ids {
+                try store.deleteSession(id: id)
+            }
+            sessions.removeAll { ids.contains($0.id) }
+            if let selectedSessionID, ids.contains(selectedSessionID) {
+                clearSessionSelection()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func isMachineEnabled(_ id: BackendID) -> Bool {
+        !disabledMachineIDs.contains(id)
+    }
+
+    func setMachine(_ id: BackendID, enabled: Bool) {
+        if enabled {
+            disabledMachineIDs.remove(id)
+        } else {
+            disabledMachineIDs.insert(id)
+            machineErrors[id] = nil
+            if selectedSession?.backendID == id {
+                clearSessionSelection()
+            }
+        }
+        UserDefaults.standard.set(
+            disabledMachineIDs.map(\.rawValue).sorted(),
+            forKey: Self.disabledMachinesKey
+        )
+        if isDiscovering {
+            discoveryTask?.cancel()
+            discoveryTask = nil
+            isDiscovering = false
+        }
+        refreshDiscovery()
     }
 
     func createSession(provider: AgentProviderDescriptor) {

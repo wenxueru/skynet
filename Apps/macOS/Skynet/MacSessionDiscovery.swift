@@ -20,11 +20,16 @@ struct MachineSessionSnapshot: Sendable {
 }
 
 enum MacSessionDiscovery {
-    static func discover() async -> [MachineSessionSnapshot] {
+    static func discover(excluding disabledMachineIDs: Set<BackendID> = []) async -> [MachineSessionSnapshot] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let localSessions = await Task.detached {
-            SessionHistoryDiscovery.discover(homeDirectory: home)
-        }.value
+        let localSessions: [DiscoveredSession]
+        if disabledMachineIDs.contains(DiscoveredMachine.local.id) {
+            localSessions = []
+        } else {
+            localSessions = await Task.detached {
+                SessionHistoryDiscovery.discover(homeDirectory: home)
+            }.value
+        }
         let hosts = SSHConfigLoader.hosts(homeDirectory: home)
 
         var snapshots = [
@@ -42,6 +47,9 @@ enum MacSessionDiscovery {
                         name: host.displayName,
                         sshAlias: host.alias
                     )
+                    guard !disabledMachineIDs.contains(machine.id) else {
+                        return MachineSessionSnapshot(machine: machine, sessions: [], error: nil)
+                    }
                     do {
                         return MachineSessionSnapshot(
                             machine: machine,

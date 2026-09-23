@@ -150,23 +150,39 @@ private struct SSHSettingsView: View {
             }
             Section("Machines") {
                 ForEach(model.machines) { machine in
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(model.machineErrors[machine.id] == nil ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(machine.name)
-                            if let alias = machine.sshAlias {
-                                Text(alias).font(.caption).foregroundStyle(.secondary)
+                    let isEnabled = model.isMachineEnabled(machine.id)
+                    Button {
+                        model.setMachine(machine.id, enabled: !isEnabled)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(isEnabled ? .blue : .secondary)
+                            Circle()
+                                .fill(statusColor(for: machine))
+                                .frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(machine.name)
+                                if let alias = machine.sshAlias {
+                                    Text(alias).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let error = model.machineErrors[machine.id] {
+                                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                                }
                             }
-                            if let error = model.machineErrors[machine.id] {
-                                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
-                            }
+                            Spacer(minLength: 0)
                         }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(machine.name)
+                    .accessibilityValue(isEnabled ? "Enabled" : "Disabled")
                 }
             }
         }
+    }
+
+    private func statusColor(for machine: DiscoveredMachine) -> Color {
+        guard model.isMachineEnabled(machine.id) else { return .secondary }
+        return model.machineErrors[machine.id] == nil ? .green : .red
     }
 }
 
