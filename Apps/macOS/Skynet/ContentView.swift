@@ -71,7 +71,7 @@ struct ContentView: View {
             Button("Delete", role: .destructive) { deletePendingSessions() }
             Button("Cancel", role: .cancel) { pendingDeletion.removeAll() }
         } message: {
-            Text("Removes the selected sessions and cached transcripts from Skynet. Original Codex or Claude conversations are not deleted.")
+            Text("Deletes the original Codex or Claude conversations and their cached transcripts from Skynet. Project files are not deleted.")
         }
         .confirmationDialog(
             "Remove \(pendingProjectRemoval?.name ?? "project")?",
@@ -200,6 +200,13 @@ struct ContentView: View {
 
             List(selection: $selectedSessionIDs) {
                 if groupingMode == "recent" {
+                    if !globalPinnedSessions.isEmpty {
+                        Section("Pinned") {
+                            ForEach(globalPinnedSessions) { session in
+                                sessionRow(session, context: recentSessionContext(session))
+                            }
+                        }
+                    }
                     ForEach(recentSessionGroups, id: \.title) { group in
                         Section(group.title) {
                             ForEach(group.sessions) { session in
@@ -348,10 +355,12 @@ struct ContentView: View {
     }
 
     private func deletePendingSessions() {
-        if model.deleteSessions(pendingDeletion) {
-            selectedSessionIDs.subtract(pendingDeletion)
-        }
+        let targets = pendingDeletion
         pendingDeletion.removeAll()
+        Task {
+            let deleted = await model.deleteSessions(targets)
+            selectedSessionIDs.subtract(deleted)
+        }
     }
 
     private func synchronizeExpansion() {
@@ -377,7 +386,16 @@ struct ContentView: View {
         let visible = model.filteredProjects
             .filter { visibleMachines.contains(model.backendID(for: $0)) }
             .flatMap { model.filteredSessions(for: $0) }
-        return SessionDateGrouping.groups(visible)
+        return SessionDateGrouping.groups(visible.filter { $0.pinMode != .global })
+    }
+
+    private var globalPinnedSessions: [SessionRecord] {
+        let visibleMachines = Set(sidebarMachines.map(\.id))
+        return model.filteredProjects
+            .filter { visibleMachines.contains(model.backendID(for: $0)) }
+            .flatMap { model.filteredSessions(for: $0) }
+            .filter { $0.pinMode == .global }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private var sidebarMachines: [DiscoveredMachine] {
@@ -409,6 +427,36 @@ struct ContentView: View {
                     ? selectedSessionIDs : Set([session.id])
                 if targets.count == 1,
                    let project = model.projects.first(where: { $0.id == session.projectID }) {
+                    Menu("Pin", systemImage: "pin") {
+                        Button("Pin in Project") {
+                            model.setSessionPinMode(session, mode: .project)
+                        }
+                        Button("Pin Globally") {
+                            model.setSessionPinMode(session, mode: .global)
+                        }
+                        if session.pinMode != nil {
+                            Button("Unpin") { model.setSessionPinMode(session, mode: nil) }
+                        }
+                    }
+                    Button("Mark as Unread", systemImage: "circle.fill") {
+                        model.markSessionUnread(session)
+                    }
+                    Button("Copy Session ID", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(session.id.description, forType: .string)
+                    }
+                    Menu("Export", systemImage: "square.and.arrow.up") {
+                        Button("JSON") { model.exportSession(session, format: .json) }
+                        Button("Markdown") { model.exportSession(session, format: .markdown) }
+                    }
+                    if session.providerResumeToken != nil,
+                       session.providerID == .codex || session.providerID == .claudeCode {
+                        Button("Fork Current Session", systemImage: "square.on.square") {
+                            Task { await model.forkSession(session) }
+                        }
+                        .disabled(model.isRunning && model.selectedSessionID == session.id)
+                    }
+                    Divider()
                     projectLaunchActions(project)
                     Button("Delete All Sessions in Project", systemImage: "trash", role: .destructive) {
                         requestDeletion(for: Set(model.sessions(for: project).map(\.id)))
@@ -547,8 +595,21 @@ private struct SessionSidebarRow: View {
     var body: some View {
         HStack(spacing: 8) {
             ProviderIcon(providerID: session.providerID, isRunning: session.status == .running)
+            if session.markedUnreadAt != nil {
+                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    .accessibilityLabel("Unread")
+            }
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title ?? "New session").lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(session.title ?? "New session")
+                        .fontWeight(session.markedUnreadAt == nil ? .regular : .semibold)
+                        .lineLimit(1)
+                    if session.pinMode != nil {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text(context ?? (session.providerID == .codex ? "Codex" : "Claude"))
                     .font(.caption)
                     .foregroundStyle(.secondary)

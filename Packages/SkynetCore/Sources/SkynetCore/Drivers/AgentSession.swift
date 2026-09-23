@@ -105,7 +105,7 @@ public actor AgentSession {
             throw SkynetError.executionFailed(reason: "A turn is already running in this session.")
         }
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else {
+        guard !trimmedPrompt.isEmpty || !attachments.isEmpty else {
             throw SkynetError.executionFailed(reason: "The prompt is empty.")
         }
 
@@ -125,7 +125,8 @@ public actor AgentSession {
             modelID: record.modelID,
             effort: record.effort,
             workingDirectory: record.workingDirectory,
-            resumeToken: record.providerResumeToken
+            resumeToken: record.forkSourceToken ?? record.providerResumeToken,
+            forkOnResume: record.forkSourceToken != nil
         )
 
         // Send the *user's* view of attachments (inline or blob) to the
@@ -207,15 +208,9 @@ public actor AgentSession {
                 on: configuration.backend,
                 operation: "Running \(configuration.provider.displayName)"
             )
-            let interactiveCodex = configuration.provider.kind == .codex
-                && record.codexApprovalMode == .manual
-            if interactiveCodex && !turn.attachments.isEmpty {
-                throw SkynetError.attachmentUnsupported(
-                    provider: configuration.provider.displayName,
-                    reason: "The Codex app-server bridge does not support attachments yet."
-                )
-            }
-            var adapterArguments = interactiveCodex
+            let usesCodexAppServer = configuration.provider.kind == .codex
+                && (record.codexApprovalMode == .manual || !turn.attachments.isEmpty)
+            var adapterArguments = usesCodexAppServer
                 ? ["app-server", "--stdio"]
                 : try adapter.buildArguments(
                     provider: configuration.provider,
@@ -246,7 +241,7 @@ public actor AgentSession {
             let process = try await configuration.backend.launch(request)
             currentProcess = process
 
-            let launchInput = interactiveCodex
+            let launchInput = usesCodexAppServer
                 ? try CodexAppServerBridge.handshake(resumeToken: turn.resumeToken)
                 : try adapter.launchStdin(provider: configuration.provider, turn: turn)
             if let stdinData = launchInput {
@@ -258,7 +253,7 @@ public actor AgentSession {
                     guard let self else { return }
                     for try await line in process.stdoutLines {
                         if Task.isCancelled { break }
-                        if interactiveCodex {
+                        if usesCodexAppServer {
                             await self.handleCodexAppServerLine(
                                 line, turn: turn, context: context, continuation: continuation
                             )
@@ -300,7 +295,7 @@ public actor AgentSession {
                         context: context,
                         continuation: continuation
                     )
-                } else if interactiveCodex {
+                } else if usesCodexAppServer {
                     await failTurn(
                         SkynetError.executionFailed(reason: "Codex app-server exited before completing the turn."),
                         context: context,
@@ -353,7 +348,11 @@ public actor AgentSession {
                 await processEvent(.sessionTokenReceived(providerSessionID: threadID), continuation: continuation)
                 do {
                     try await currentProcess?.writeToStdin(
-                        CodexAppServerBridge.startTurn(threadID: threadID, turn: turn)
+                        CodexAppServerBridge.startTurn(
+                            threadID: threadID,
+                            turn: turn,
+                            approvalMode: record.codexApprovalMode ?? .automatic
+                        )
                     )
                 } catch {
                     await failTurn(
@@ -431,7 +430,11 @@ public actor AgentSession {
                 try configuration.store?.saveSession(record)
 
             case .sessionTokenReceived(let token):
+                if let forkSourceToken = record.forkSourceToken, token == forkSourceToken {
+                    throw SkynetError.executionFailed(reason: "Claude fork did not create a new session ID.")
+                }
                 record.providerResumeToken = token
+                record.forkSourceToken = nil
                 record.updatedAt = configuration.now()
                 try configuration.store?.saveSession(record)
 

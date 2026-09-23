@@ -171,6 +171,7 @@ private enum RemoteSessionDiscovery {
         let createdAt: String?
         let updatedAt: String?
         let messages: [WireMessage]
+        let totalUsage: TokenUsage?
     }
 
     static func discover(host: String) async throws -> [DiscoveredSession] {
@@ -224,7 +225,8 @@ private enum RemoteSessionDiscovery {
                     modelID: wire.model.map { ModelID($0) },
                     createdAt: date(wire.createdAt) ?? messages.first?.createdAt ?? fallbackDate,
                     updatedAt: date(wire.updatedAt) ?? messages.last?.createdAt ?? fallbackDate,
-                    messages: messages
+                    messages: messages,
+                    totalUsage: wire.totalUsage ?? TokenUsage()
                 )
             }
         }.value
@@ -266,8 +268,45 @@ def clean_user_text(text):
     tags='local-command-caveat|command-name|command-message|command-args|local-command-stdout|system-reminder|task-notification'
     return re.sub(r'<('+tags+r')\b[^>]*>.*?</\1>', '', text or '', flags=re.S).strip()
 
-def emit(provider,sid,cwd,name,created,updated,model,messages):
-    print(json.dumps({'provider':provider,'id':sid,'cwd':cwd,'title':title(name),'createdAt':created,'updatedAt':updated,'model':model,'messages':messages[-500:]},ensure_ascii=False))
+def codex_usage(value):
+    cached = value.get('cached_input_tokens', 0) or 0
+    written = value.get('cache_write_input_tokens', 0) or 0
+    input_count = value.get('input_tokens', 0) or 0
+    return {
+        'inputTokens': max(0, input_count - cached - written),
+        'cacheReadTokens': cached,
+        'cacheWriteTokens': written,
+        'outputTokens': value.get('output_tokens', 0) or 0,
+    }
+
+def claude_usage(value):
+    return {
+        'inputTokens': value.get('input_tokens', 0) or 0,
+        'cacheReadTokens': value.get('cache_read_input_tokens', 0) or 0,
+        'cacheWriteTokens': value.get('cache_creation_input_tokens', 0) or 0,
+        'outputTokens': value.get('output_tokens', 0) or 0,
+    }
+
+def add_usage(values):
+    keys = ('inputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens')
+    totals = dict.fromkeys(keys, 0)
+    for item in values:
+        for key in keys:
+            totals[key] += item.get(key, 0)
+    return totals
+
+def emit(provider,sid,cwd,name,created,updated,model,messages,usage):
+    print(json.dumps({
+        'provider': provider,
+        'id': sid,
+        'cwd': cwd,
+        'title': title(name),
+        'createdAt': created,
+        'updatedAt': updated,
+        'model': model,
+        'messages': messages[-500:],
+        'totalUsage': usage,
+    }, ensure_ascii=False))
 
 home=os.path.expanduser('~')
 titles={}
@@ -281,7 +320,7 @@ except: pass
 
 paths=glob.glob(os.path.join(home,'.codex','sessions','**','*.jsonl'),recursive=True)
 for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
-    sid=cwd=created=None; updated=model=None; messages=[]; child=False
+    sid=cwd=created=None; updated=model=None; messages=[]; child=False; usage=None
     try:
         for line in open(path,errors='ignore'):
             try: item=json.loads(line)
@@ -291,6 +330,12 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
             if item.get('type')=='session_meta':
                 sid=payload.get('id') or payload.get('session_id'); cwd=payload.get('cwd'); created=payload.get('timestamp') or stamp
                 child=bool(payload.get('parent_thread_id') or (payload.get('source') or {}).get('subagent'))
+            elif item.get('type')=='turn_context':
+                model=payload.get('model') or model
+            elif item.get('type')=='event_msg' and payload.get('type')=='token_count':
+                total=(payload.get('info') or {}).get('total_token_usage')
+                if isinstance(total,dict):
+                    usage=codex_usage(total)
             elif item.get('type')=='response_item' and payload.get('type')=='message' and payload.get('role') in ('user','assistant'):
                 role=payload['role']; accepted=('input_text','text') if role=='user' else ('output_text','text')
                 content=payload.get('content',[]); kinds=((payload.get('internal_chat_message_metadata_passthrough') or {}).get('content_item_kinds') or [])
@@ -302,12 +347,12 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
                 if text: messages.append({'role':role,'text':text,'timestamp':stamp})
         if sid and not child:
             name=titles.get(sid) or next((m['text'] for m in messages if m['role']=='user'),'Imported session')
-            emit('codex',sid,cwd,name,created,updated,model,messages)
+            emit('codex',sid,cwd,name,created,updated,model,messages,usage)
     except: pass
 
 paths=glob.glob(os.path.join(home,'.claude','projects','*','*.jsonl'))
 for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
-    sid=cwd=name=created=updated=model=None; messages=[]
+    sid=cwd=name=created=updated=model=None; messages=[]; usage_by_id={}
     try:
         for line in open(path,errors='ignore'):
             try: item=json.loads(line)
@@ -318,6 +363,9 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
             if item.get('type') not in ('user','assistant'): continue
             message=item.get('message') or {}; role=message.get('role') or item.get('type'); stamp=item.get('timestamp')
             created=created or stamp; updated=stamp or updated; model=message.get('model') or model
+            if role=='assistant' and isinstance(message.get('usage'),dict):
+                key=message.get('id') or str(len(usage_by_id))
+                usage_by_id[key]=claude_usage(message['usage'])
             content=message.get('content'); texts=[]
             if isinstance(content,str): texts=[content]
             elif isinstance(content,list): texts=[b.get('text','') for b in content if isinstance(b,dict) and b.get('type')=='text']
@@ -326,7 +374,8 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
             if text: messages.append({'role':role,'text':text,'timestamp':stamp})
         if sid:
             name=name or next((m['text'] for m in messages if m['role']=='user'),'Imported session')
-            emit('claude-code',sid,cwd,name,created,updated,model,messages)
+            usage=add_usage(usage_by_id.values()) if usage_by_id else None
+            emit('claude-code',sid,cwd,name,created,updated,model,messages,usage)
     except: pass
 """#
 }

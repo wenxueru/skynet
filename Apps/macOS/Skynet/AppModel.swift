@@ -24,7 +24,10 @@ final class AppModel {
     var providers: [AgentProviderDescriptor] = AgentProviderDescriptor.builtIns
     var selectedProjectID: ProjectID?
     var selectedSessionID: SessionID?
-    var messages: [Message] = []
+    var messages: [Message] = [] {
+        didSet { transcriptGroups = TranscriptGrouping.groups(messages) }
+    }
+    private(set) var transcriptGroups: [TranscriptGroup] = []
     var liveText = ""
     var liveThinking = ""
     var liveTools: [LiveTool] = []
@@ -117,7 +120,14 @@ final class AppModel {
 
     func filteredSessions(for project: Project) -> [SessionRecord] {
         let query = normalizedSearchText
-        let projectSessions = sessions(for: project).filter { $0.isArchived != true }
+        let projectSessions = sessions(for: project)
+            .filter { $0.isArchived != true }
+            .sorted { lhs, rhs in
+                if (lhs.pinMode != nil) != (rhs.pinMode != nil) {
+                    return lhs.pinMode != nil
+                }
+                return lhs.updatedAt > rhs.updatedAt
+            }
         guard !query.isEmpty, !projectMatchesSearch(project, query: query) else {
             return projectSessions
         }
@@ -206,8 +216,101 @@ final class AppModel {
     func select(session: SessionRecord) {
         selectedProjectID = session.projectID
         selectedSessionID = session.id
+        if session.markedUnreadAt != nil {
+            var updated = session
+            updated.markedUnreadAt = nil
+            save(updated)
+        }
         resetLiveState()
         loadTranscript(for: session.id)
+    }
+
+    func setSessionPinMode(_ session: SessionRecord, mode: SessionRecord.PinMode?) {
+        var updated = session
+        updated.pinMode = mode
+        save(updated)
+    }
+
+    func markSessionUnread(_ session: SessionRecord) {
+        var updated = session
+        updated.markedUnreadAt = Date()
+        save(updated)
+    }
+
+    func forkSession(_ source: SessionRecord) async {
+        guard !(isRunning && selectedSessionID == source.id),
+              source.status != .running else {
+            errorMessage = "Stop the session before forking it."
+            return
+        }
+        guard let sourceID = source.providerResumeToken else {
+            errorMessage = "This session has no original conversation to fork."
+            return
+        }
+        do {
+            let store = try requireStore()
+            let provider = providers.first { $0.id == source.providerID }
+            let messages = try await Task.detached(priority: .userInitiated) {
+                try store.loadMessages(for: source.id)
+            }.value
+            var child = source
+            child.id = SessionID()
+            child.title = "\(source.title ?? "Session") (fork)"
+            child.createdAt = Date()
+            child.updatedAt = child.createdAt
+            child.status = .idle
+            child.totalUsage = TokenUsage()
+            child.isArchived = nil
+            child.archivedInProvider = nil
+            child.pinMode = nil
+            child.markedUnreadAt = nil
+            switch provider?.kind {
+            case .codex:
+                child.providerResumeToken = try await CodexThreadFork.fork(
+                    threadID: sourceID,
+                    backend: executionBackend(for: source),
+                    executable: provider?.resolvedExecutableName ?? "codex",
+                    environment: provider?.environment ?? [:]
+                )
+                child.forkSourceToken = nil
+            case .claudeCode:
+                child.providerResumeToken = nil
+                child.forkSourceToken = sourceID
+            case .claudeCodeCompatible, nil:
+                throw SkynetError.executionFailed(
+                    reason: "Forking is not verified for this provider."
+                )
+            }
+            try store.replaceMessages(messages, for: child.id)
+            try store.saveSession(child)
+            sessions.insert(child, at: 0)
+            select(session: child)
+        } catch {
+            errorMessage = "Fork failed: \(error.localizedDescription)"
+        }
+    }
+
+    func exportSession(_ session: SessionRecord, format: SessionTranscriptExport.Format) {
+        Task {
+            do {
+                let store = try requireStore()
+                let messages = try await Task.detached(priority: .userInitiated) {
+                    try store.loadMessages(for: session.id)
+                }.value
+                let data = try SessionTranscriptExport.data(
+                    session: session, messages: messages, format: format
+                )
+                let panel = NSSavePanel()
+                let safeTitle = (session.title ?? "session")
+                    .replacingOccurrences(of: "/", with: "-")
+                    .replacingOccurrences(of: ":", with: "-")
+                panel.nameFieldStringValue = "\(safeTitle).\(format.fileExtension)"
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                try data.write(to: url, options: .atomic)
+            } catch {
+                errorMessage = "Export failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     func clearSessionSelection() {
@@ -220,7 +323,52 @@ final class AppModel {
     }
 
     @discardableResult
-    func deleteSessions(_ ids: Set<SessionID>) -> Bool {
+    func deleteSessions(_ ids: Set<SessionID>) async -> Set<SessionID> {
+        var deleted: Set<SessionID> = []
+        var failures: [String] = []
+        for session in sessions where ids.contains(session.id) {
+            if isRunning && selectedSessionID == session.id {
+                failures.append("Stop \(session.title ?? "the running session") before deleting it.")
+                continue
+            }
+            do {
+                if let sourceID = session.providerResumeToken {
+                    let provider = providers.first { $0.id == session.providerID }
+                    switch provider?.kind {
+                    case .codex:
+                        try await CodexThreadDelete.delete(
+                            threadID: sourceID,
+                            backend: executionBackend(for: session),
+                            executable: provider?.resolvedExecutableName ?? "codex",
+                            environment: provider?.environment ?? [:]
+                        )
+                    case .claudeCode, .claudeCodeCompatible:
+                        try await ClaudeSessionDelete.delete(
+                            sessionID: sourceID,
+                            backend: executionBackend(for: session),
+                            environment: provider?.environment ?? [:]
+                        )
+                    case nil:
+                        throw SkynetError.executionFailed(reason: "The session provider is unavailable.")
+                    }
+                } else if session.messageCount > 0 {
+                    throw SkynetError.executionFailed(reason: "No original session ID is available.")
+                }
+                deleted.insert(session.id)
+            } catch {
+                failures.append("\(session.title ?? "Session"): \(error.localizedDescription)")
+            }
+        }
+        if !deleted.isEmpty && !removeCachedSessions(deleted) {
+            failures.append("The original session was deleted, but its Skynet cache could not be removed.")
+            deleted.removeAll()
+        }
+        if !failures.isEmpty { errorMessage = failures.joined(separator: "\n") }
+        return deleted
+    }
+
+    @discardableResult
+    private func removeCachedSessions(_ ids: Set<SessionID>) -> Bool {
         guard !ids.isEmpty else { return true }
         if isRunning, let selectedSessionID, ids.contains(selectedSessionID) {
             errorMessage = "Stop the running session before deleting it."
@@ -372,7 +520,7 @@ final class AppModel {
             errorMessage = "Stop the running session before removing its project."
             return
         }
-        guard deleteSessions(ids) else { return }
+        guard removeCachedSessions(ids) else { return }
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         projects.remove(at: index)
         persistProjects()
@@ -443,10 +591,33 @@ final class AppModel {
     func renameSelectedSession(_ title: String) {
         guard var session = selectedSession else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, session.title != trimmed else { return }
+        let previousTitle = session.title
         session.title = trimmed
         session.updatedAt = Date()
         save(session)
+        guard session.providerID == .codex,
+              let threadID = session.providerResumeToken else { return }
+        let renamedSession = session
+        let provider = providers.first { $0.id == .codex }
+        Task {
+            do {
+                try await CodexThreadName.setName(
+                    trimmed,
+                    threadID: threadID,
+                    backend: executionBackend(for: renamedSession),
+                    executable: provider?.resolvedExecutableName ?? "codex",
+                    environment: provider?.environment ?? [:]
+                )
+            } catch {
+                if var current = sessions.first(where: { $0.id == renamedSession.id }),
+                   current.title == trimmed {
+                    current.title = previousTitle
+                    save(current)
+                }
+                errorMessage = "Could not rename the original Codex thread: \(error.localizedDescription)"
+            }
+        }
     }
 
     func updateModel(_ modelID: ModelID?) {
@@ -512,11 +683,22 @@ final class AppModel {
             case "webp": mediaType = "image/webp"
             default: mediaType = "image/png"
             }
-            pendingAttachments.append(
-                ImageAttachment(data: data, mediaType: mediaType, fileName: url.lastPathComponent)
-            )
+            attachImage(data: data, mediaType: mediaType, fileName: url.lastPathComponent)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func attachImage(data: Data, mediaType: String, fileName: String? = nil) {
+        pendingAttachments.append(
+            ImageAttachment(data: data, mediaType: mediaType, fileName: fileName)
+        )
+    }
+
+    func imageData(for attachment: ImageAttachment) -> Data? {
+        switch attachment.payload {
+        case .inline(let data, _): data
+        case .blob(let reference): try? store?.loadBlob(reference)
         }
     }
 
@@ -728,13 +910,36 @@ final class AppModel {
                 record.workingDirectory = discovered.workingDirectory
                 record.providerResumeToken = discovered.providerSessionID
                 record.updatedAt = max(record.updatedAt, discovered.updatedAt)
+                if discovered.totalUsage.totalTokens != nil {
+                    record.totalUsage = discovered.totalUsage
+                }
                 if record.title == nil { record.title = discovered.title }
                 let shouldReplaceMessages = existingIndex == nil
                     || record.messageCount != discovered.messages.count
                     || previousUpdatedAt < discovered.updatedAt
-                if !discovered.messages.isEmpty, shouldReplaceMessages {
+                var needsImageUpgrade = false
+                if !shouldReplaceMessages,
+                   discovered.messages.contains(where: Self.containsImage) {
+                    needsImageUpgrade = !(try store.loadMessages(for: record.id))
+                        .contains(where: Self.containsImage)
+                }
+                if !discovered.messages.isEmpty, shouldReplaceMessages || needsImageUpgrade {
                     record.messageCount = discovered.messages.count
-                    try store.replaceMessages(discovered.messages, for: record.id)
+                    let messages = try discovered.messages.map { message in
+                        var stored = message
+                        stored.content = try message.content.map { block in
+                            guard case .image(var attachment) = block,
+                                  case .inline(let data, let mediaType) = attachment.payload else {
+                                return block
+                            }
+                            attachment.payload = .blob(try store.storeBlob(
+                                data, mediaType: mediaType, fileName: attachment.fileName
+                            ))
+                            return .image(attachment)
+                        }
+                        return stored
+                    }
+                    try store.replaceMessages(messages, for: record.id)
                 }
                 try store.saveSession(record)
                 if let existingIndex {
@@ -753,6 +958,10 @@ final class AppModel {
         if let selectedSessionID {
             loadTranscript(for: selectedSessionID)
         }
+    }
+
+    private static func containsImage(_ message: Message) -> Bool {
+        message.content.contains { if case .image = $0 { true } else { false } }
     }
 
     private struct DiscoverySessionKey: Hashable, Codable {
@@ -858,6 +1067,17 @@ final class AppModel {
             isLoadingTranscript = false
             transcriptTask = nil
         }
+    }
+
+    func loadUsageSummary(range: SessionUsageRange) async throws -> SessionUsageSummary {
+        let store = try requireStore()
+        let snapshot = sessions
+        return try await Task.detached(priority: .utility) {
+            let records = try snapshot.map { session in
+                (session: session, messages: try store.loadMessages(for: session.id))
+            }
+            return SessionUsageSummary.summarize(records, range: range)
+        }.value
     }
 
     private func requireStore() throws -> JSONDiskStore {

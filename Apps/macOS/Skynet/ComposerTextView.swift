@@ -1,10 +1,13 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
     var onSend: () -> Void
+    var onPasteImage: (Data) -> Void = { _ in }
+    var onPasteFiles: ([URL]) -> Void = { _ in }
     var suggestionsPresented = false
     var onMoveSuggestion: (Int) -> Void = { _ in }
     var onAcceptSuggestion: () -> Void = {}
@@ -18,8 +21,14 @@ struct ComposerTextView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
 
-        let view = NSTextView()
+        let view = ComposerNativeTextView()
         view.delegate = context.coordinator
+        view.onPasteImage = { [weak coordinator = context.coordinator] data in
+            coordinator?.parent.onPasteImage(data)
+        }
+        view.onPasteFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onPasteFiles(urls)
+        }
         view.font = .preferredFont(forTextStyle: .body)
         view.drawsBackground = false
         view.isRichText = false
@@ -85,5 +94,37 @@ struct ComposerTextView: NSViewRepresentable {
             }
             return true
         }
+    }
+}
+
+private final class ComposerNativeTextView: NSTextView {
+    var onPasteImage: ((Data) -> Void)?
+    var onPasteFiles: (([URL]) -> Void)?
+
+    override func paste(_ sender: Any?) {
+        let board = NSPasteboard.general
+        let imageFiles = (board.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []).filter {
+            UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
+        }
+        if !imageFiles.isEmpty {
+            onPasteFiles?(imageFiles)
+            return
+        }
+
+        if let data = board.data(forType: NSPasteboard.PasteboardType("public.png")) {
+            onPasteImage?(data)
+            return
+        }
+        if let image = NSImage(pasteboard: board),
+           let tiff = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            onPasteImage?(png)
+            return
+        }
+        super.paste(sender)
     }
 }

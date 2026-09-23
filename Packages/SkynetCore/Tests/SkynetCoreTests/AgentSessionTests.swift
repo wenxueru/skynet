@@ -45,6 +45,40 @@ struct AgentSessionTests {
 
     // MARK: Happy path
 
+    @Test(arguments: [SessionRecord.CodexApprovalMode.manual, .automatic])
+    func codexImageUsesNativeAppServerInput(mode: SessionRecord.CodexApprovalMode) async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { data, process in
+                let request = String(decoding: data, as: UTF8.self)
+                let methods = request.split(separator: "\n").compactMap {
+                    try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+                }.compactMap { $0["method"]?.stringValue }
+                if methods.contains("thread/start") {
+                    process.emitStdout(#"{"id":1,"result":{"thread":{"id":"thread-image"}}}"#)
+                } else if methods.contains("turn/start") {
+                    process.emitStdout(#"{"id":2,"result":{"turn":{"id":"turn-image"}}}"#)
+                    process.emitStdout(#"{"method":"turn/completed","params":{"turn":{"status":"completed"}}}"#)
+                    process.finishStdout()
+                }
+            })
+        ])
+        let record = SessionRecord(providerID: .codex, codexApprovalMode: mode)
+        let session = try makeSession(provider: .codex, record: record, backend: backend)
+
+        _ = try await collectEvents(try await session.send(
+            "", attachments: [ImageAttachment(data: Data([1, 2, 3]), mediaType: "image/png")]
+        ))
+
+        let request = try #require(backend.launchedProcesses.first?.stdinWrites.last)
+        let frame = try JSONDecoder().decode(JSONValue.self, from: request)
+        #expect(frame["method"]?.stringValue == "turn/start")
+        #expect(frame["params"]?["input"]?[0]?["type"]?.stringValue == "image")
+        #expect(frame["params"]?["input"]?[0]?["url"]?.stringValue
+            == "data:image/png;base64,AQID")
+        #expect(frame["params"]?["approvalsReviewer"]?.stringValue
+            == (mode == .automatic ? "auto_review" : nil))
+    }
+
     @Test func claudeTurnProducesEventsAndPersistsTranscript() async throws {
         let backend = ScriptedExecutionBackend(
             scripts: [
@@ -86,6 +120,26 @@ struct AgentSessionTests {
         #expect(record.totalUsage.outputTokens == 5)
         #expect(record.title == "what is 2+2")
         #expect(record.messageCount == 2)
+    }
+
+    @Test func claudeForkUsesOneShotNativeFlagAndStoresChildID() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(stdoutLines: [
+                #"{"type":"system","subtype":"init","session_id":"child-456"}"#,
+                #"{"type":"result","subtype":"success","result":"done","session_id":"child-456"}"#,
+            ]),
+        ])
+        let record = SessionRecord(providerID: .claudeCode, forkSourceToken: "parent-123")
+        let session = try makeSession(record: record, backend: backend)
+
+        _ = try await collectEvents(try await session.send("continue"))
+
+        let arguments = try #require(backend.launchedRequests.first?.arguments)
+        #expect(arguments.contains("--fork-session"))
+        #expect(arguments.contains("parent-123"))
+        let updated = await session.record
+        #expect(updated.providerResumeToken == "child-456")
+        #expect(updated.forkSourceToken == nil)
     }
 
     @Test func launchedRequestCarriesProviderConfiguration() async throws {

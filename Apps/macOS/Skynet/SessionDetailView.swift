@@ -22,6 +22,20 @@ struct SessionDetailView: View {
     @State private var customModelID = ""
     @State private var isCodexEffortPresented = false
     @State private var isCodexModelListPresented = false
+    @State private var isOutlinePresented = false
+    @State private var outlineQuery = ""
+    @State private var outlineJump: OutlineJump?
+
+    private struct OutlineJump {
+        let nonce = UUID()
+        let groupID: String
+    }
+
+    private struct OutlineEntry: Identifiable {
+        let id: String
+        let title: String
+        let createdAt: Date
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -45,6 +59,9 @@ struct SessionDetailView: View {
             isEditingTitle = false
             isTitleFocused = false
             title = model.selectedSession?.title ?? "New session"
+        }
+        .onChange(of: model.selectedSession?.title) { _, newTitle in
+            if !isEditingTitle { title = newTitle ?? "New session" }
         }
         .onChange(of: isTitleFocused) { wasFocused, isFocused in
             if wasFocused && !isFocused && isEditingTitle {
@@ -131,6 +148,42 @@ struct SessionDetailView: View {
             if model.isRunning {
                 ProgressView().controlSize(.small)
             }
+            Button {
+                isOutlinePresented.toggle()
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Conversation outline")
+            .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Search outline", text: $outlineQuery)
+                        .textFieldStyle(.roundedBorder)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(filteredOutlineEntries) { entry in
+                                Button {
+                                    outlineJump = OutlineJump(groupID: entry.id)
+                                    isOutlinePresented = false
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(entry.title).lineLimit(2)
+                                        Text(entry.createdAt, style: .date)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(7)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(width: 300, height: 360)
+            }
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -144,13 +197,34 @@ struct SessionDetailView: View {
         title = model.selectedSession?.title ?? "New session"
     }
 
+    private var filteredOutlineEntries: [OutlineEntry] {
+        let entries = model.transcriptGroups.compactMap { group -> OutlineEntry? in
+            guard case .message(let id, let message) = group,
+                  message.origin == .user else { return nil }
+            let text = message.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = text.isEmpty ? "Image" : String(text.prefix(140))
+            return OutlineEntry(id: id, title: title, createdAt: message.createdAt)
+        }
+        let query = outlineQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty ? entries : entries.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+        }
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 18) {
-                    ForEach(model.messages) { message in
-                        TranscriptMessageView(message: message)
-                            .id(message.id.description)
+                    ForEach(model.transcriptGroups) { group in
+                        Group {
+                            switch group {
+                            case .message(_, let message):
+                                TranscriptMessageView(message: message, imageData: model.imageData)
+                            case .tools(_, let steps, let collapseSingle):
+                                TranscriptToolRunView(steps: steps, collapseSingle: collapseSingle)
+                            }
+                        }
+                        .id(group.id)
                     }
                     if model.isRunning {
                         LiveTranscriptResponseView(model: model)
@@ -183,6 +257,10 @@ struct SessionDetailView: View {
             }
             .onChange(of: model.liveTools.count) { _, _ in
                 scrollToLatestIfNeeded(using: proxy)
+            }
+            .onChange(of: outlineJump?.nonce) { _, _ in
+                guard let groupID = outlineJump?.groupID else { return }
+                withAnimation { proxy.scrollTo(groupID, anchor: .top) }
             }
             .overlay(alignment: .bottomTrailing) {
                 if !isAtBottom {
@@ -245,6 +323,10 @@ struct SessionDetailView: View {
                     text: $draft,
                     selection: $composerSelection,
                     onSend: submit,
+                    onPasteImage: { model.attachImage(
+                        data: $0, mediaType: "image/png", fileName: "Pasted image.png"
+                    ) },
+                    onPasteFiles: { $0.forEach(model.attachImage) },
                     suggestionsPresented: !visibleSuggestions.isEmpty,
                     onMoveSuggestion: moveSuggestion,
                     onAcceptSuggestion: acceptSelectedSuggestion,
