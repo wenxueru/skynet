@@ -8,17 +8,56 @@ public enum CodexThreadArchive {
         backend: any ExecutionBackend,
         executable: String = "codex",
         environment: [String: String] = [:],
-        timeout: Duration = .seconds(15)
+        timeout: Duration = .seconds(45)
     ) async throws {
-        try await CodexThreadMutation.perform(
-            request: CodexAppServerBridge.archiveRequest(threadID: threadID, archived: archived),
-            operation: "archive",
-            threadID: threadID,
-            backend: backend,
-            executable: executable,
-            environment: environment,
-            timeout: timeout
-        )
+        if archived, backend.kind == .local,
+           archivedRolloutExists(threadID: threadID, environment: environment) {
+            return
+        }
+        do {
+            try await CodexThreadMutation.perform(
+                request: CodexAppServerBridge.archiveRequest(threadID: threadID, archived: archived),
+                operation: "archive",
+                threadID: threadID,
+                backend: backend,
+                executable: executable,
+                environment: environment,
+                timeout: timeout
+            )
+        } catch {
+            // The provider can move the rollout before its acknowledgement arrives.
+            // Reconcile the native state before reporting an ambiguous failure.
+            if archived, backend.kind == .local,
+               archivedRolloutExists(threadID: threadID, environment: environment) {
+                return
+            }
+            let state = try? await CodexThreadMutation.perform(
+                request: CodexAppServerBridge.readThreadRequest(threadID: threadID),
+                operation: "read archive state",
+                threadID: threadID,
+                backend: backend,
+                executable: executable,
+                environment: environment,
+                timeout: .seconds(10)
+            )
+            guard let path = state?["thread"]?["path"]?.stringValue else { throw error }
+            let folders = URL(fileURLWithPath: path).pathComponents
+            let isInArchive = folders.contains("archived_sessions")
+            let matches = archived ? isInArchive : folders.contains("sessions") && !isInArchive
+            guard matches else { throw error }
+        }
+    }
+
+    private static func archivedRolloutExists(
+        threadID: String, environment: [String: String]
+    ) -> Bool {
+        let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let codexHome = environment["CODEX_HOME"]
+            ?? ProcessInfo.processInfo.environment["CODEX_HOME"]
+            ?? URL(fileURLWithPath: home).appendingPathComponent(".codex").path
+        let archive = URL(fileURLWithPath: codexHome).appendingPathComponent("archived_sessions")
+        let files = try? FileManager.default.contentsOfDirectory(atPath: archive.path)
+        return files?.contains(where: { $0.hasSuffix("-\(threadID).jsonl") }) == true
     }
 }
 
