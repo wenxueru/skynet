@@ -3,6 +3,40 @@ import SkynetCore
 import SkynetCoreDoubles
 import Testing
 
+#if os(macOS)
+@Suite("SSH failure diagnostics")
+struct SSHFailureDiagnosticsTests {
+    @Test func omitsNonFatalCryptoAndControlSocketWarnings() {
+        let reason = SSHBackend.failureReason(
+            operation: "Remote transcript loading",
+            exitCode: 255,
+            stderr: """
+            ** WARNING: connection is not using a post-quantum key exchange algorithm.
+            ** This session may be vulnerable to \"store now, decrypt later\" attacks.
+            ** The server may need to be upgraded. See https://openssh.com/pq.html
+            ControlSocket /Users/me/.ssh/skynet-abc already exists, disabling multiplexing
+            """
+        )
+
+        #expect(reason == "SSH connection failed (exit status 255). SSH reported no actionable error details.")
+    }
+
+    @Test func keepsActionableFailureAlongsideNonFatalWarnings() {
+        let reason = SSHBackend.failureReason(
+            operation: "Remote transcript loading",
+            exitCode: 3,
+            stderr: """
+            ** WARNING: connection is not using a post-quantum key exchange algorithm.
+            ControlSocket /Users/me/.ssh/skynet-abc already exists, disabling multiplexing
+            Remote transcript exceeds the configured safety limit.
+            """
+        )
+
+        #expect(reason == "Remote transcript loading failed (exit status 3): Remote transcript exceeds the configured safety limit.")
+    }
+}
+#endif
+
 @Suite("Platform execution policy")
 struct PlatformPolicyTests {
     @Test func macOSPolicyAllowsEverything() throws {

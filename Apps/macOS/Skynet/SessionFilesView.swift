@@ -288,7 +288,7 @@ private struct SessionFileBrowser: Sendable {
                 + "[ -e \"$f\" ] || [ -L \"$f\" ] || continue; "
                 + "if [ -d \"$f\" ]; then printf 'D%s\\0' \"$f\"; "
                 + "else printf 'F%s\\0' \"$f\"; fi; done"
-            return try run("/usr/bin/ssh", ["-oBatchMode=yes", "-oConnectTimeout=5", "--", host, command])
+            return try run("/usr/bin/ssh", sshArguments(host: host, command: command))
                 .split(separator: 0).prefix(2_000).compactMap { item in
                     guard let kind = item.first,
                           let path = String(data: item.dropFirst(), encoding: .utf8),
@@ -342,7 +342,7 @@ private struct SessionFileBrowser: Sendable {
         let data: Data
         if let host {
             let command = "head -c \(maxBytes) -- \(SSHBackend.shellQuote(path))"
-            data = try run("/usr/bin/ssh", ["-oBatchMode=yes", "-oConnectTimeout=5", "--", host, command])
+            data = try run("/usr/bin/ssh", sshArguments(host: host, command: command))
         } else {
             let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
             defer { try? handle.close() }
@@ -362,9 +362,14 @@ private struct SessionFileBrowser: Sendable {
         if let host {
             let command = "cd \(SSHBackend.shellQuote(root)) && git "
                 + arguments.map(SSHBackend.shellQuote).joined(separator: " ")
-            return try run("/usr/bin/ssh", ["-oBatchMode=yes", "-oConnectTimeout=5", "--", host, command])
+            return try run("/usr/bin/ssh", sshArguments(host: host, command: command))
         }
         return try run("/usr/bin/git", ["-C", root] + arguments)
+    }
+
+    private func sshArguments(host: String, command: String) -> [String] {
+        ["-oBatchMode=yes", "-oConnectTimeout=5"]
+            + SSHBackend.connectionReuseOptions + ["--", host, command]
     }
 
     private func isInsideRoot(_ path: String) -> Bool {

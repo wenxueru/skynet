@@ -12,6 +12,7 @@ struct SessionDetailView: View {
     @FocusState private var isTitleFocused: Bool
     @State private var isImageImporterPresented = false
     @State private var isAtBottom = true
+    @State private var shouldScrollToLatestAfterLoad = false
     @State private var transcriptViewportHeight: CGFloat = 0
     @State private var composerSelection = NSRange(location: 0, length: 0)
     @State private var composerItems: [ComposerSuggestion] = []
@@ -24,6 +25,7 @@ struct SessionDetailView: View {
     @State private var isCodexEffortPresented = false
     @State private var isCodexModelListPresented = false
     @State private var isOutlinePresented = false
+    @State private var isEnvironmentPresented = false
     @State private var terminalMode: IntegratedTerminalView.Mode?
     @State private var isFilesPresented = false
     @State private var isScratchlistPresented = false
@@ -241,6 +243,17 @@ struct SessionDetailView: View {
             .fixedSize()
             .help("Terminal")
             Button {
+                isEnvironmentPresented.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Environment and activity")
+            .popover(isPresented: $isEnvironmentPresented, arrowEdge: .bottom) {
+                environmentPanel
+            }
+            Button {
                 isOutlinePresented.toggle()
             } label: {
                 Image(systemName: "list.bullet")
@@ -281,6 +294,157 @@ struct SessionDetailView: View {
         .frame(height: 48)
     }
 
+    private var environmentPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Environment")
+                    .font(.headline)
+
+                if let session = model.selectedSession {
+                    environmentValue(
+                        "Project",
+                        value: model.selectedProject?.rootPath
+                            ?? session.workingDirectory ?? "No working directory",
+                        icon: "folder"
+                    )
+                    environmentValue(
+                        "Remote",
+                        value: session.backendID.flatMap { id in
+                            id.rawValue.hasPrefix("ssh:")
+                                ? String(id.rawValue.dropFirst("ssh:".count)) : nil
+                        } ?? "This Mac",
+                        icon: "globe"
+                    )
+                }
+
+                Divider()
+
+                activitySection(
+                    "Subagents",
+                    icon: "person.2",
+                    tools: subagentTools,
+                    emptyMessage: "No subagent activity reported"
+                )
+
+                Divider()
+
+                activitySection(
+                    "Background processes",
+                    icon: "terminal",
+                    tools: backgroundTools,
+                    emptyMessage: model.isRunning
+                        ? "No background process reported yet"
+                        : "No background processes"
+                )
+
+                Text("Activity shown here is based on events reported by the active provider.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+        }
+        .frame(width: 340, height: 460)
+    }
+
+    private func environmentValue(_ title: String, value: String, icon: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).foregroundStyle(.secondary)
+                Text(value)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+    }
+
+    private func activitySection(
+        _ title: String,
+        icon: String,
+        tools: [AppModel.LiveTool],
+        emptyMessage: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundStyle(.secondary)
+                Text(title).font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                if !tools.isEmpty {
+                    let completed = tools.filter { $0.output != nil }.count
+                    Text(completed == tools.count ? "\(completed) done" : "\(tools.count) total")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            if tools.isEmpty {
+                Text(emptyMessage)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(tools) { tool in
+                    activityRow(tool)
+                }
+            }
+        }
+    }
+
+    private func activityRow(_ tool: AppModel.LiveTool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: tool.output == nil ? "circle.dotted" : "checkmark.circle.fill")
+                .foregroundStyle(tool.output == nil ? Color.accentColor : Color.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(activityTitle(for: tool))
+                    .lineLimit(2)
+                Text(tool.output == nil ? "Running · \(tool.name)" : "Done · \(tool.name)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+    }
+
+    private var subagentTools: [AppModel.LiveTool] {
+        model.liveTools.filter(isSubagentTool)
+    }
+
+    private var backgroundTools: [AppModel.LiveTool] {
+        model.liveTools.filter { tool in
+            guard !isSubagentTool(tool) else { return false }
+            let isExplicitlyBackground = [
+                "run_in_background", "runInBackground", "background", "is_background",
+            ].contains { tool.input[$0]?.boolValue == true }
+            let isActiveCommand = tool.output == nil
+                && ["bash", "codexbash"].contains(tool.name.lowercased())
+            return isExplicitlyBackground || isActiveCommand
+        }
+    }
+
+    private func isSubagentTool(_ tool: AppModel.LiveTool) -> Bool {
+        let name = tool.name.lowercased()
+        let shortName = name.split(separator: "_").last.map(String.init) ?? name
+        return ["task", "agent", "codexagent"].contains(shortName)
+            || name.contains("subagent")
+            || name.contains("spawn_agent")
+    }
+
+    private func activityTitle(for tool: AppModel.LiveTool) -> String {
+        let detail = ["description", "command", "task", "prompt", "subagent_type"]
+            .compactMap { tool.input[$0]?.stringValue }
+            .first { !$0.isEmpty }
+        guard let detail else { return tool.name }
+        let oneLine = detail
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        return oneLine.count > 100 ? String(oneLine.prefix(99)) + "…" : oneLine
+    }
+
     private func finishTitleEditing(saveChanges: Bool) {
         guard isEditingTitle else { return }
         isEditingTitle = false
@@ -307,6 +471,26 @@ struct SessionDetailView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 18) {
+                    if model.canLoadOlderTranscript {
+                        Button {
+                            Task { await model.loadOlderTranscript() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                if model.isLoadingOlderTranscript {
+                                    ProgressView().controlSize(.small)
+                                    Text("Loading older messages…")
+                                } else {
+                                    Text("Load older messages")
+                                }
+                            }
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isLoadingOlderTranscript || model.isLoadingTranscript)
+                    }
                     ForEach(model.transcriptGroups) { group in
                         Group {
                             switch group {
@@ -344,6 +528,29 @@ struct SessionDetailView: View {
                 .frame(maxWidth: .infinity)
             }
             .coordinateSpace(name: "transcriptScroll")
+            .onAppear {
+                guard model.selectedSessionID != nil else { return }
+                isAtBottom = true
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+            .onChange(of: model.selectedSessionID) { _, sessionID in
+                guard sessionID != nil else {
+                    shouldScrollToLatestAfterLoad = false
+                    return
+                }
+                if model.isLoadingTranscript {
+                    shouldScrollToLatestAfterLoad = true
+                } else {
+                    isAtBottom = true
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: model.isLoadingTranscript) { wasLoading, isLoading in
+                guard wasLoading, !isLoading, shouldScrollToLatestAfterLoad else { return }
+                shouldScrollToLatestAfterLoad = false
+                isAtBottom = true
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             .onPreferenceChange(BottomPositionKey.self) { bottomPosition in
                 isAtBottom = bottomPosition <= transcriptViewportHeight + 24
             }

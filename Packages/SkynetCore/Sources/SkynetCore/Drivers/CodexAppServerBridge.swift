@@ -183,6 +183,10 @@ enum CodexAppServerBridge {
                     id: ToolCallID(id), name: "ApplyPatch",
                     input: ["changes": item["changes"] ?? .null]
                 ))]
+            case "collabAgentToolCall", "subagentToolCall":
+                return [.toolCallStarted(ToolCall(
+                    id: ToolCallID(id), name: "CodexAgent", input: item
+                ))]
             default: return []
             }
         case "item/completed":
@@ -197,7 +201,8 @@ enum CodexAppServerBridge {
                 ))]
             }
             if let id = item["id"]?.stringValue,
-               ["commandExecution", "fileChange"].contains(item["type"]?.stringValue ?? "") {
+               ["commandExecution", "fileChange", "collabAgentToolCall", "subagentToolCall"]
+                .contains(item["type"]?.stringValue ?? "") {
                 return [.toolCallCompleted(ToolCallResult(
                     toolCallID: ToolCallID(id),
                     content: item["aggregatedOutput"]?.stringValue ?? "",
