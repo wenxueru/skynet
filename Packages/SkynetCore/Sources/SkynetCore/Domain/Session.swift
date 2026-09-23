@@ -7,6 +7,18 @@ import Foundation
 /// statistics. `AgentSession` (the live actor) reads and writes this record
 /// through the persistence store.
 public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
+    public enum CodexApprovalMode: String, Codable, Hashable, Sendable {
+        case manual
+        case automatic
+    }
+    public enum ClaudePermissionMode: String, Codable, Hashable, Sendable, CaseIterable {
+        case manual
+        case acceptEdits
+        case plan
+        case auto
+        case dontAsk
+        case bypassPermissions
+    }
     public enum Status: String, Codable, Sendable {
         case idle
         case running
@@ -19,6 +31,19 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
     public var providerID: ProviderID
     public var modelID: ModelID?
     public var effort: ReasoningEffort?
+    /// Coarse tool permission policy selected for this conversation.
+    /// `nil` preserves the provider's safe default used by older records.
+    public var permissionEffect: PermissionRule.Effect?
+    /// Explicit Codex reviewer choice. Nil keeps older sessions' policy intact.
+    public var codexApprovalMode: CodexApprovalMode?
+    /// Per-session Codex Fast mode override. Nil follows the user's Codex config.
+    public var codexFastMode: Bool?
+    /// Claude Code's native `--permission-mode`; nil keeps older sessions' policy.
+    public var claudePermissionMode: ClaudePermissionMode?
+    /// Hidden from the active sidebar, but retained in Skynet storage.
+    public var isArchived: Bool?
+    /// Set for sessions archived through the provider; nil also covers older Skynet-only archives.
+    public var archivedInProvider: Bool?
     /// Human-facing title. `nil` until the first turn completes.
     public var title: String?
     /// Which backend the session ran on last (local / ssh:<host> / relay).
@@ -41,6 +66,12 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         providerID: ProviderID,
         modelID: ModelID? = nil,
         effort: ReasoningEffort? = nil,
+        permissionEffect: PermissionRule.Effect? = nil,
+        codexApprovalMode: CodexApprovalMode? = nil,
+        codexFastMode: Bool? = nil,
+        claudePermissionMode: ClaudePermissionMode? = nil,
+        isArchived: Bool? = nil,
+        archivedInProvider: Bool? = nil,
         title: String? = nil,
         backendID: BackendID? = nil,
         workingDirectory: String? = nil,
@@ -56,6 +87,12 @@ public struct SessionRecord: Codable, Hashable, Sendable, Identifiable {
         self.providerID = providerID
         self.modelID = modelID
         self.effort = effort
+        self.permissionEffect = permissionEffect
+        self.codexApprovalMode = codexApprovalMode
+        self.codexFastMode = codexFastMode
+        self.claudePermissionMode = claudePermissionMode
+        self.isArchived = isArchived
+        self.archivedInProvider = archivedInProvider
         self.title = title
         self.backendID = backendID
         self.workingDirectory = workingDirectory

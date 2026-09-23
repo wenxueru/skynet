@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -15,12 +16,16 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    var colorScheme: ColorScheme? {
+    var nsAppearance: NSAppearance? {
         switch self {
         case .system: nil
-        case .light: .light
-        case .dark: .dark
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
         }
+    }
+
+    static func apply(_ rawValue: String) {
+        NSApp.appearance = (AppAppearance(rawValue: rawValue) ?? .system).nsAppearance
     }
 }
 

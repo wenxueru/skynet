@@ -60,9 +60,7 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
         case .allow:
             arguments += ["--permission-mode", "bypassPermissions"]
         case .deny:
-            // Default mode; headless CLIs auto-deny anything not explicitly
-            // allowed, which is exactly the requested semantics.
-            break
+            arguments += ["--permission-mode", "dontAsk"]
         case .ask:
             // Interactive asks only make sense when someone can answer.
             if interactivePermissions {

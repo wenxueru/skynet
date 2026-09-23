@@ -106,14 +106,14 @@ struct ClaudeCodeAdapterTests {
         #expect(joined.contains("--permission-prompt-tool stdio"))
     }
 
-    @Test func denyByDefaultAddsNoModeFlag() throws {
+    @Test func denyByDefaultUsesDontAsk() throws {
         let arguments = try adapter.buildArguments(
             provider: provider,
             turn: turn(),
             permissions: PermissionPolicy(rules: [], defaultEffect: .deny),
             interactivePermissions: false
         )
-        #expect(!arguments.contains("--permission-mode"))
+        #expect(arguments.suffix(2) == ["--permission-mode", "dontAsk"])
     }
 
     // MARK: Launch stdin
