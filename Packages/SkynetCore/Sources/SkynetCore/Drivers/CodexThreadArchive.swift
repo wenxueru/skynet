@@ -68,17 +68,50 @@ public enum CodexThreadDelete {
         backend: any ExecutionBackend,
         executable: String = "codex",
         environment: [String: String] = [:],
-        timeout: Duration = .seconds(15)
+        timeout: Duration = .seconds(45)
     ) async throws {
-        try await CodexThreadMutation.perform(
-            request: CodexAppServerBridge.deleteRequest(threadID: threadID),
-            operation: "delete",
-            threadID: threadID,
-            backend: backend,
-            executable: executable,
-            environment: environment,
-            timeout: timeout
-        )
+        do {
+            try await CodexThreadMutation.perform(
+                request: CodexAppServerBridge.deleteRequest(threadID: threadID),
+                operation: "delete",
+                threadID: threadID,
+                backend: backend,
+                executable: executable,
+                environment: environment,
+                timeout: timeout
+            )
+        } catch {
+            guard await isMissing(
+                threadID: threadID,
+                backend: backend,
+                executable: executable,
+                environment: environment
+            ) else { throw error }
+        }
+    }
+
+    private static func isMissing(
+        threadID: String,
+        backend: any ExecutionBackend,
+        executable: String,
+        environment: [String: String]
+    ) async -> Bool {
+        do {
+            try await CodexThreadMutation.perform(
+                request: CodexAppServerBridge.readThreadRequest(threadID: threadID),
+                operation: "read delete state",
+                threadID: threadID,
+                backend: backend,
+                executable: executable,
+                environment: environment,
+                timeout: .seconds(10)
+            )
+            return false
+        } catch SkynetError.executionFailed(let reason) {
+            return reason == "Codex read delete state failed: thread not loaded: \(threadID)"
+        } catch {
+            return false
+        }
     }
 }
 
