@@ -185,6 +185,7 @@ enum RemoteSessionDiscovery {
                 "-oConnectTimeout=3",
                 "-oConnectionAttempts=1",
                 "-oStrictHostKeyChecking=yes",
+            ] + SSHBackend.connectionReuseOptions + [
                 "--",
                 host,
                 "python3 -c \(SSHBackend.shellQuote(remoteScript))",
@@ -196,10 +197,12 @@ enum RemoteSessionDiscovery {
             let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
-                let detail = String(decoding: errorData, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 throw SkynetError.executionFailed(
-                    reason: detail.isEmpty ? "SSH discovery failed for \(host)." : detail
+                    reason: SSHBackend.failureReason(
+                        operation: "Remote session discovery on \(host)",
+                        exitCode: process.terminationStatus,
+                        stderr: String(decoding: errorData, as: UTF8.self)
+                    )
                 )
             }
             let lines = String(decoding: output, as: UTF8.self).split(separator: "\n")
@@ -232,59 +235,55 @@ enum RemoteSessionDiscovery {
         }.value
     }
 
-    static func fullTranscript(for record: SessionRecord) async throws -> DiscoveredSession? {
+    static func transcriptPage(
+        for record: SessionRecord,
+        before cursor: Int64? = nil
+    ) async throws -> SessionTranscriptPage? {
         guard let backendID = record.backendID?.rawValue,
               backendID.hasPrefix("ssh:"),
               let token = record.providerResumeToken else { return nil }
         let host = String(backendID.dropFirst("ssh:".count))
         let provider = record.providerID.rawValue
         return try await Task.detached(priority: .userInitiated) {
-            let temporaryURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("skynet-remote-transcript-\(UUID().uuidString).jsonl")
-            guard FileManager.default.createFile(atPath: temporaryURL.path, contents: nil) else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            defer { try? FileManager.default.removeItem(at: temporaryURL) }
-            let destination = try FileHandle(forWritingTo: temporaryURL)
-            defer { try? destination.close() }
-
             let process = Process()
+            let stdout = Pipe()
             let stderr = Pipe()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
             process.arguments = [
                 "-oBatchMode=yes", "-oConnectTimeout=5", "-oStrictHostKeyChecking=yes",
+            ] + SSHBackend.connectionReuseOptions + [
                 "--", host,
                 "python3 -c \(SSHBackend.shellQuote(fullTranscriptScript)) "
-                    + "\(SSHBackend.shellQuote(provider)) \(SSHBackend.shellQuote(token))",
+                    + "\(SSHBackend.shellQuote(provider)) \(SSHBackend.shellQuote(token)) "
+                    + "\(cursor.map { String($0) } ?? "latest")",
             ]
-            process.standardOutput = destination
+            process.standardOutput = stdout
             process.standardError = stderr
             try process.run()
+            let output = stdout.fileHandleForReading.readDataToEndOfFile()
             let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
-                let detail = String(decoding: errorData, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 throw SkynetError.executionFailed(
-                    reason: detail.isEmpty ? "Remote transcript could not be loaded." : detail
+                    reason: SSHBackend.failureReason(
+                        operation: "Remote transcript loading",
+                        exitCode: process.terminationStatus,
+                        stderr: String(decoding: errorData, as: UTF8.self)
+                    )
                 )
             }
-            switch record.providerID {
-            case .codex:
-                return SessionHistoryDiscovery.parseCodexTranscript(
-                    at: temporaryURL, indexedTitle: record.title
-                )
-            case .claudeCode:
-                return SessionHistoryDiscovery.parseClaudeTranscript(at: temporaryURL)
-            default:
-                return nil
-            }
+            return try SessionTranscriptPageParser.parse(
+                output,
+                for: record,
+                temporaryFilePrefix: "skynet-remote-page",
+                invalidPageMessage: "Remote transcript page was invalid."
+            )
         }.value
     }
 
     private static let fullTranscriptScript = #"""
-import glob,os,sys
-provider,sid=sys.argv[1:3]
+import glob,json,os,sys
+provider,sid,cursor=sys.argv[1:4]
 home=os.path.expanduser('~')
 if provider=='codex':
     paths=[p for p in glob.glob(os.path.join(home,'.codex','sessions','**','*.jsonl'),recursive=True)
@@ -296,14 +295,28 @@ else:
 if not paths:
     sys.exit(2)
 path=max(paths,key=os.path.getmtime)
-if os.path.getsize(path)>100_000_000:
-    sys.stderr.write('Remote transcript exceeds the 100 MB safety limit.')
-    sys.exit(3)
+size=os.path.getsize(path); page_size=4*1024*1024
+end=size if cursor=='latest' else min(size,int(cursor))
+start=max(0,end-page_size)
 with open(path,'rb') as source:
+    if start:
+        source.seek(start-1)
+        if source.read(1)!=b'\n': source.readline()
+        else: source.seek(start)
+        start=source.tell()
+    source.seek(0)
+    meta=None
     while True:
-        chunk=source.read(65536)
-        if not chunk: break
-        sys.stdout.buffer.write(chunk)
+        line=source.readline()
+        if not line: break
+        try:
+            item=json.loads(line)
+            if item.get('type')=='session_meta': meta=line; break
+        except: pass
+    sys.stdout.buffer.write((json.dumps({'cursor':start})+'\n').encode())
+    if start and meta: sys.stdout.buffer.write(meta)
+    source.seek(start)
+    sys.stdout.buffer.write(source.read(max(0,end-start)))
 """#
 
     private static func providerID(_ value: String) -> ProviderID? {
@@ -403,7 +416,9 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
             payload=item.get('payload') or {}
             if item.get('type')=='session_meta':
                 sid=payload.get('id') or payload.get('session_id'); cwd=payload.get('cwd'); created=payload.get('timestamp') or stamp
-                child=bool(payload.get('parent_thread_id') or (payload.get('source') or {}).get('subagent'))
+                source=payload.get('source')
+                subagent=source.get('subagent') if isinstance(source,dict) else None
+                child=bool(payload.get('parent_thread_id') or subagent)
             elif item.get('type')=='turn_context':
                 model=payload.get('model') or model
             elif item.get('type')=='event_msg' and payload.get('type')=='token_count':
@@ -452,4 +467,184 @@ for path in sorted(paths,key=lambda p:os.path.getmtime(p),reverse=True)[:200]:
             emit('claude-code',sid,cwd,name,created,updated,model,messages,usage)
     except: pass
 """#
+}
+
+struct SessionTranscriptPage {
+    let session: DiscoveredSession
+    let olderCursor: Int64?
+}
+
+private enum SessionTranscriptPageParser {
+    private struct Envelope: Decodable {
+        let cursor: Int64
+    }
+
+    static func parse(
+        _ output: Data,
+        for record: SessionRecord,
+        temporaryFilePrefix: String,
+        invalidPageMessage: String
+    ) throws -> SessionTranscriptPage? {
+        guard let newline = output.firstIndex(of: 0x0A),
+              let envelope = try? JSONDecoder().decode(
+                Envelope.self,
+                from: Data(output[..<newline])
+              ) else {
+            throw SkynetError.executionFailed(reason: invalidPageMessage)
+        }
+
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(temporaryFilePrefix)-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: transcriptURL) }
+        try Data(output[(newline + 1)...]).write(to: transcriptURL, options: .atomic)
+
+        let session: DiscoveredSession?
+        switch record.providerID {
+        case .codex:
+            session = SessionHistoryDiscovery.parseCodexTranscript(
+                at: transcriptURL, indexedTitle: record.title
+            )
+        case .claudeCode:
+            session = SessionHistoryDiscovery.parseClaudeTranscript(at: transcriptURL)
+        default:
+            session = nil
+        }
+        guard let session else { return nil }
+        return SessionTranscriptPage(
+            session: session,
+            olderCursor: envelope.cursor > 0 ? envelope.cursor : nil
+        )
+    }
+}
+
+enum SessionTranscriptDiscovery {
+    static func transcriptPage(
+        for record: SessionRecord,
+        before cursor: Int64? = nil
+    ) async throws -> SessionTranscriptPage? {
+        guard let backendID = record.backendID?.rawValue else { return nil }
+        if backendID == DiscoveredMachine.local.id.rawValue {
+            return try await LocalSessionTranscriptDiscovery.transcriptPage(
+                for: record, before: cursor
+            )
+        }
+        if backendID.hasPrefix("ssh:") {
+            return try await RemoteSessionDiscovery.transcriptPage(for: record, before: cursor)
+        }
+        return nil
+    }
+}
+
+private enum LocalSessionTranscriptDiscovery {
+    private static let pageSize = 4 * 1024 * 1024
+    private static let maxMetadataLineSize = 1024 * 1024
+
+    static func transcriptPage(
+        for record: SessionRecord,
+        before cursor: Int64? = nil
+    ) async throws -> SessionTranscriptPage? {
+        guard let token = record.providerResumeToken,
+              (record.providerID == .codex || record.providerID == .claudeCode) else { return nil }
+        return try await Task.detached(priority: .userInitiated) {
+            guard let sourceURL = transcriptURL(providerID: record.providerID, token: token) else {
+                return nil
+            }
+            let output = try readPage(at: sourceURL, before: cursor)
+            return try SessionTranscriptPageParser.parse(
+                output,
+                for: record,
+                temporaryFilePrefix: "skynet-local-page",
+                invalidPageMessage: "Local transcript page was invalid."
+            )
+        }.value
+    }
+
+    private static func transcriptURL(providerID: ProviderID, token: String) -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let root: URL
+        switch providerID {
+        case .codex:
+            root = home.appendingPathComponent(".codex/sessions", isDirectory: true)
+        case .claudeCode:
+            root = home.appendingPathComponent(".claude/projects", isDirectory: true)
+        default:
+            return nil
+        }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        var newest: (url: URL, modifiedAt: Date)?
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            let matches = providerID == .codex
+                ? url.lastPathComponent.contains(token)
+                : url.deletingPathExtension().lastPathComponent == token
+            guard matches,
+                  let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let modifiedAt = values.contentModificationDate else { continue }
+            if let current = newest, modifiedAt <= current.modifiedAt { continue }
+            newest = (url, modifiedAt)
+        }
+        return newest?.url
+    }
+
+    private static func readPage(at url: URL, before cursor: Int64?) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        let fileSize = try handle.seekToEnd()
+        let end = min(UInt64(max(0, cursor ?? Int64(fileSize))), fileSize)
+        var start = end > UInt64(pageSize) ? end - UInt64(pageSize) : 0
+        if start > 0 {
+            handle.seek(toFileOffset: start - 1)
+            if try handle.read(upToCount: 1) != Data([0x0A]) {
+                start = try nextLineStart(in: handle, from: start, before: end)
+            }
+        }
+
+        var output = Data("{\"cursor\":\(start)}\n".utf8)
+        if start > 0 {
+            handle.seek(toFileOffset: 0)
+            output.append(try readFirstLine(from: handle))
+        }
+        handle.seek(toFileOffset: start)
+        output.append(try handle.read(upToCount: Int(end - start)) ?? Data())
+        return output
+    }
+
+    private static func nextLineStart(
+        in handle: FileHandle,
+        from offset: UInt64,
+        before end: UInt64
+    ) throws -> UInt64 {
+        var position = offset
+        while position < end {
+            handle.seek(toFileOffset: position)
+            let chunk = try handle.read(upToCount: Int(min(64 * 1024, end - position))) ?? Data()
+            guard !chunk.isEmpty else { break }
+            if let newline = chunk.firstIndex(of: 0x0A) {
+                return position + UInt64(chunk.distance(from: chunk.startIndex, to: newline)) + 1
+            }
+            position += UInt64(chunk.count)
+        }
+        return end
+    }
+
+    private static func readFirstLine(from handle: FileHandle) throws -> Data {
+        var line = Data()
+        while line.count < maxMetadataLineSize {
+            let chunk = try handle.read(upToCount: 16 * 1024) ?? Data()
+            guard !chunk.isEmpty else { break }
+            if let newline = chunk.firstIndex(of: 0x0A) {
+                line.append(chunk[..<newline])
+                line.append(0x0A)
+                return line
+            }
+            line.append(chunk)
+        }
+        return line
+    }
 }

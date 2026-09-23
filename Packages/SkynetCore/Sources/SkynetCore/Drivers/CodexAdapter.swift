@@ -326,6 +326,11 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                     )
                 )
             ]
+        case "collab_agent_tool_call", "collabAgentToolCall",
+             "subagent_tool_call", "subagentToolCall":
+            return [.toolCallStarted(ToolCall(
+                id: ToolCallID(itemID), name: "CodexAgent", input: item
+            ))]
         default:
             return [.unhandledEvent(raw: item)]
         }
@@ -388,6 +393,13 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                     )
                 )
             ]
+        case "collab_agent_tool_call", "collabAgentToolCall",
+             "subagent_tool_call", "subagentToolCall":
+            return [.toolCallCompleted(ToolCallResult(
+                toolCallID: ToolCallID(itemID),
+                content: item["result"]?.stringValue ?? "",
+                isError: item["status"]?.stringValue == "failed"
+            ))]
         case "error":
             return [
                 .turnFailed(

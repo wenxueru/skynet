@@ -238,6 +238,18 @@ struct CodexAdapterTests {
         #expect(result?.isError == false)
     }
 
+    @Test func parsesCodexSubagentItemsForActivityTracking() {
+        let started = #"{"type":"item.started","item":{"id":"agent-1","type":"collab_agent_tool_call","tool":"spawn_agent","prompt":"Inspect the tests"}}"#
+        var events = adapter.parseOutputLine(started, turn: turn())
+        let call = events.compactMap(\.toolCallStarted).first
+        #expect(call?.name == "CodexAgent")
+        #expect(call?.input["prompt"]?.stringValue == "Inspect the tests")
+
+        let completed = #"{"type":"item.completed","item":{"id":"agent-1","type":"collab_agent_tool_call","status":"completed","result":"Done"}}"#
+        events = adapter.parseOutputLine(completed, turn: turn())
+        #expect(events.compactMap(\.toolCallCompleted).first?.toolCallID == ToolCallID("agent-1"))
+    }
+
     @Test func parsesAgentMessageAndReasoningItems() {
         let message = #"{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"the answer"}}"#
         var events = adapter.parseOutputLine(message, turn: turn())

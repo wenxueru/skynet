@@ -595,10 +595,6 @@ private struct SessionSidebarRow: View {
     var body: some View {
         HStack(spacing: 8) {
             ProviderIcon(providerID: session.providerID, isRunning: session.status == .running)
-            if session.markedUnreadAt != nil {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                    .accessibilityLabel("Unread")
-            }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(session.title ?? "New session")
@@ -615,11 +611,28 @@ private struct SessionSidebarRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(session.updatedAt, style: .relative)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(relativeTime(to: context.date))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if session.markedUnreadAt != nil {
+                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                    .accessibilityLabel("Unread")
+            }
         }
         .padding(.vertical, 3)
+    }
+
+    private func relativeTime(to now: Date) -> String {
+        let elapsed = max(0, Int(now.timeIntervalSince(session.updatedAt)))
+        if elapsed < 60 { return "now" }
+        if elapsed < 3_600 { return "\(elapsed / 60)m ago" }
+        if elapsed < 86_400 { return "\(elapsed / 3_600)h ago" }
+        if elapsed < 604_800 { return "\(elapsed / 86_400)d ago" }
+        if elapsed < 2_629_746 { return "\(elapsed / 604_800)w ago" }
+        if elapsed < 31_556_952 { return "\(elapsed / 2_629_746)mo ago" }
+        return "\(elapsed / 31_556_952)y ago"
     }
 }
 

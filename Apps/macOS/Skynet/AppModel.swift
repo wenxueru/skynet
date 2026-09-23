@@ -41,6 +41,12 @@ final class AppModel {
         let errorMessage: String?
     }
 
+    private struct TranscriptMessageKey: Hashable {
+        let origin: String
+        let createdAt: Date
+        let content: [ContentBlock]
+    }
+
     var projects: [Project] = []
     var sessions: [SessionRecord] = []
     var providers: [AgentProviderDescriptor] = AgentProviderDescriptor.builtIns
@@ -69,6 +75,7 @@ final class AppModel {
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
     var isLoadingTranscript = false
+    var isLoadingOlderTranscript = false
     private(set) var storageDirectoryURL: URL?
 
     private let store: JSONDiskStore?
@@ -81,6 +88,7 @@ final class AppModel {
     private var scheduledDispatch: Task<Void, Never>?
     private var scheduledDispatchSessionID: SessionID?
     private var scheduledQueueSessionIDs: Set<SessionID> = []
+    private var transcriptCursors: [SessionID: Int64] = [:]
 
     private static let disabledMachinesKey = "disabledMachineIDs"
     private static let deletedDiscoveryKeysKey = "deletedDiscoveryKeys"
@@ -123,6 +131,10 @@ final class AppModel {
 
     var selectedSession: SessionRecord? {
         sessions.first { $0.id == selectedSessionID }
+    }
+
+    var canLoadOlderTranscript: Bool {
+        selectedSessionID.flatMap { transcriptCursors[$0] } != nil
     }
 
     var selectedProvider: AgentProviderDescriptor? {
@@ -382,46 +394,84 @@ final class AppModel {
     func deleteSessions(_ ids: Set<SessionID>) async -> Set<SessionID> {
         var deleted: Set<SessionID> = []
         var failures: [String] = []
-        for session in sessions where ids.contains(session.id) {
+        let targets = sessions.filter { ids.contains($0.id) }
+        let titlesByID = Dictionary(uniqueKeysWithValues: targets.map {
+            ($0.id, $0.title ?? "Session")
+        })
+        var deletable: [SessionRecord] = []
+        for session in targets {
             if (isRunning && selectedSessionID == session.id)
                 || scheduledDispatchSessionID == session.id {
                 failures.append("Stop \(session.title ?? "the running session") before deleting it.")
                 continue
             }
-            do {
-                if let sourceID = session.providerResumeToken {
-                    let provider = providers.first { $0.id == session.providerID }
-                    switch provider?.kind {
-                    case .codex:
-                        try await CodexThreadDelete.delete(
-                            threadID: sourceID,
-                            backend: executionBackend(for: session),
-                            executable: provider?.resolvedExecutableName ?? "codex",
-                            environment: provider?.environment ?? [:]
-                        )
-                    case .claudeCode, .claudeCodeCompatible:
-                        try await ClaudeSessionDelete.delete(
-                            sessionID: sourceID,
-                            backend: executionBackend(for: session),
-                            environment: provider?.environment ?? [:]
-                        )
-                    case nil:
-                        throw SkynetError.executionFailed(reason: "The session provider is unavailable.")
-                    }
-                } else if session.messageCount > 0 {
-                    throw SkynetError.executionFailed(reason: "No original session ID is available.")
+            deletable.append(session)
+        }
+
+        // Provider-owned deletions each launch a CLI/app-server process. Run a
+        // small number concurrently so multi-select doesn't pay the full
+        // startup latency once per session (or overwhelm remote backends).
+        let maxConcurrentDeletions = 4
+        let results = await withTaskGroup(of: (SessionID, String?).self) { group in
+            var nextTarget = deletable.makeIterator()
+            for _ in 0..<min(maxConcurrentDeletions, deletable.count) {
+                guard let session = nextTarget.next() else { break }
+                group.addTask { await self.deleteProviderSession(session) }
+            }
+
+            var results: [(SessionID, String?)] = []
+            while let result = await group.next() {
+                results.append(result)
+                if let session = nextTarget.next() {
+                    group.addTask { await self.deleteProviderSession(session) }
                 }
-                deleted.insert(session.id)
-            } catch {
-                failures.append("\(session.title ?? "Session"): \(error.localizedDescription)")
+            }
+            return results
+        }
+        for (id, failure) in results {
+            if let failure {
+                failures.append("\(titlesByID[id] ?? "Session"): \(failure)")
+            } else {
+                deleted.insert(id)
             }
         }
+
         if !deleted.isEmpty && !removeCachedSessions(deleted) {
             failures.append("The original session was deleted, but its Skynet cache could not be removed.")
             deleted.removeAll()
         }
         if !failures.isEmpty { errorMessage = failures.joined(separator: "\n") }
         return deleted
+    }
+
+    private func deleteProviderSession(_ session: SessionRecord) async -> (SessionID, String?) {
+        do {
+            if let sourceID = session.providerResumeToken {
+                let provider = providers.first { $0.id == session.providerID }
+                switch provider?.kind {
+                case .codex:
+                    try await CodexThreadDelete.delete(
+                        threadID: sourceID,
+                        backend: executionBackend(for: session),
+                        executable: provider?.resolvedExecutableName ?? "codex",
+                        environment: provider?.environment ?? [:]
+                    )
+                case .claudeCode, .claudeCodeCompatible:
+                    try await ClaudeSessionDelete.delete(
+                        sessionID: sourceID,
+                        backend: executionBackend(for: session),
+                        environment: provider?.environment ?? [:]
+                    )
+                case nil:
+                    throw SkynetError.executionFailed(reason: "The session provider is unavailable.")
+                }
+            } else if session.messageCount > 0 {
+                throw SkynetError.executionFailed(reason: "No original session ID is available.")
+            }
+            return (session.id, nil)
+        } catch {
+            return (session.id, error.localizedDescription)
+        }
     }
 
     @discardableResult
@@ -1337,20 +1387,7 @@ final class AppModel {
                 }
                 if !discovered.messages.isEmpty, shouldReplaceMessages || needsImageUpgrade {
                     record.messageCount = discovered.messages.count
-                    let messages = try discovered.messages.map { message in
-                        var stored = message
-                        stored.content = try message.content.map { block in
-                            guard case .image(var attachment) = block,
-                                  case .inline(let data, let mediaType) = attachment.payload else {
-                                return block
-                            }
-                            attachment.payload = .blob(try store.storeBlob(
-                                data, mediaType: mediaType, fileName: attachment.fileName
-                            ))
-                            return .image(attachment)
-                        }
-                        return stored
-                    }
+                    let messages = try Self.persistableMessages(discovered.messages, store: store)
                     try store.replaceMessages(messages, for: record.id)
                 }
                 try store.saveSession(record)
@@ -1451,6 +1488,7 @@ final class AppModel {
 
     private func loadTranscript(for sessionID: SessionID) {
         transcriptTask?.cancel()
+        transcriptCursors[sessionID] = nil
         let store: JSONDiskStore
         do {
             store = try requireStore()
@@ -1462,8 +1500,11 @@ final class AppModel {
         }
         isLoadingTranscript = true
         messages = []
-        let remoteRecord = sessions.first {
-            $0.id == sessionID && $0.backendID?.rawValue.hasPrefix("ssh:") == true
+        let transcriptRecord = sessions.first {
+            $0.id == sessionID
+                && $0.providerResumeToken != nil
+                && ($0.backendID == DiscoveredMachine.local.id
+                    || $0.backendID?.rawValue.hasPrefix("ssh:") == true)
         }
         transcriptTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
@@ -1482,44 +1523,104 @@ final class AppModel {
             guard let self, !Task.isCancelled, selectedSessionID == sessionID else { return }
             messages = result.messages
             errorMessage = result.errorMessage
-            if let remoteRecord, remoteRecord.backendID?.rawValue.hasPrefix("ssh:") == true {
+            if let transcriptRecord {
                 do {
-                    if let imported = try await RemoteSessionDiscovery.fullTranscript(for: remoteRecord),
-                       imported.messages.count >= result.messages.count {
+                    if let page = try await SessionTranscriptDiscovery.transcriptPage(for: transcriptRecord) {
+                        let imported = page.session
+                        let mergedMessages = Self.mergeTranscriptMessages(
+                            imported.messages, result.messages
+                        )
                         let storedMessages = try await Task.detached(priority: .userInitiated) {
-                            let normalized = try imported.messages.map { message in
-                                var stored = message
-                                stored.content = try message.content.map { block in
-                                    guard case .image(var attachment) = block,
-                                          case .inline(let data, let mediaType) = attachment.payload else {
-                                        return block
-                                    }
-                                    attachment.payload = .blob(try store.storeBlob(
-                                        data, mediaType: mediaType, fileName: attachment.fileName
-                                    ))
-                                    return .image(attachment)
-                                }
-                                return stored
-                            }
+                            let normalized = try Self.persistableMessages(mergedMessages, store: store)
                             try store.replaceMessages(normalized, for: sessionID)
                             return normalized
                         }.value
                         guard !Task.isCancelled, selectedSessionID == sessionID else { return }
                         messages = storedMessages
-                        var updated = remoteRecord
+                        transcriptCursors[sessionID] = page.olderCursor
+                        var updated = transcriptRecord
                         updated.messageCount = storedMessages.count
-                        updated.totalUsage = imported.totalUsage
                         updated.updatedAt = max(updated.updatedAt, imported.updatedAt)
                         save(updated)
                     }
                 } catch {
                     guard !Task.isCancelled, selectedSessionID == sessionID else { return }
-                    errorMessage = "Remote history could not be fully loaded: \(error.localizedDescription)"
+                    errorMessage = "Session history could not be fully loaded: \(error.localizedDescription)"
                 }
             }
             guard !Task.isCancelled, selectedSessionID == sessionID else { return }
             isLoadingTranscript = false
             transcriptTask = nil
+        }
+    }
+
+    func loadOlderTranscript() async {
+        guard !isLoadingOlderTranscript,
+              let sessionID = selectedSessionID,
+              let cursor = transcriptCursors[sessionID],
+              let record = sessions.first(where: { $0.id == sessionID }),
+              let store else { return }
+        isLoadingOlderTranscript = true
+        defer { isLoadingOlderTranscript = false }
+
+        do {
+            guard let page = try await SessionTranscriptDiscovery.transcriptPage(
+                for: record, before: cursor
+            ) else {
+                transcriptCursors[sessionID] = nil
+                return
+            }
+            guard selectedSessionID == sessionID else { return }
+            let mergedMessages = Self.mergeTranscriptMessages(page.session.messages, messages)
+            let storedMessages = try await Task.detached(priority: .userInitiated) {
+                let normalized = try Self.persistableMessages(mergedMessages, store: store)
+                try store.replaceMessages(normalized, for: sessionID)
+                return normalized
+            }.value
+            guard selectedSessionID == sessionID else { return }
+            messages = storedMessages
+            transcriptCursors[sessionID] = page.olderCursor
+            var updated = record
+            updated.messageCount = storedMessages.count
+            save(updated)
+        } catch {
+            if selectedSessionID == sessionID {
+                errorMessage = "Could not load older session messages: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    nonisolated private static func mergeTranscriptMessages(
+        _ older: [Message],
+        _ newer: [Message]
+    ) -> [Message] {
+        var seen = Set<TranscriptMessageKey>()
+        return (older + newer)
+            .filter {
+                seen.insert(TranscriptMessageKey(
+                    origin: $0.origin.rawValue,
+                    createdAt: $0.createdAt,
+                    content: $0.content
+                )).inserted
+            }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    nonisolated private static func persistableMessages(
+        _ messages: [Message],
+        store: JSONDiskStore
+    ) throws -> [Message] {
+        try messages.map { message in
+            var stored = message
+            stored.content = try message.content.map { block in
+                guard case .image(var attachment) = block,
+                      case .inline(let data, let mediaType) = attachment.payload else { return block }
+                attachment.payload = .blob(try store.storeBlob(
+                    data, mediaType: mediaType, fileName: attachment.fileName
+                ))
+                return .image(attachment)
+            }
+            return stored
         }
     }
 
