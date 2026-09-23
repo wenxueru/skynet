@@ -48,6 +48,61 @@ struct CodexThreadArchiveTests {
         #expect(backend.launchedProcesses.first?.wasTerminated == true)
     }
 
+    @Test func deletionUsesProviderThreadDelete() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        try await CodexThreadDelete.delete(threadID: "thread-123", backend: backend)
+
+        let input = String(decoding: try #require(backend.launchedProcesses.first?.stdinWrites.first), as: UTF8.self)
+        let frames = input.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
+        #expect(frames.last?["method"]?.stringValue == "thread/delete")
+        #expect(frames.last?["params"]?["threadId"]?.stringValue == "thread-123")
+    }
+
+    @Test func renameUsesProviderThreadSetName() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        try await CodexThreadName.setName("New title", threadID: "thread-123", backend: backend)
+
+        let input = String(decoding: try #require(backend.launchedProcesses.first?.stdinWrites.first), as: UTF8.self)
+        let frames = input.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
+        #expect(frames.last?["method"]?.stringValue == "thread/setName")
+        #expect(frames.last?["params"]?["threadId"]?.stringValue == "thread-123")
+        #expect(frames.last?["params"]?["name"]?.stringValue == "New title")
+    }
+
+    @Test func forkReturnsDistinctNativeThreadID() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{"thread":{"id":"child-456"}}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        let childID = try await CodexThreadFork.fork(threadID: "parent-123", backend: backend)
+        #expect(childID == "child-456")
+        let input = String(decoding: try #require(backend.launchedProcesses.first?.stdinWrites.first), as: UTF8.self)
+        let frames = input.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
+        #expect(frames.last?["method"]?.stringValue == "thread/fork")
+        #expect(frames.last?["params"]?["threadId"]?.stringValue == "parent-123")
+    }
+
     @Test func timeoutTerminatesAppServer() async throws {
         let backend = ScriptedExecutionBackend(scripts: [
             .init(onStdin: { _, _ in }),

@@ -31,6 +31,9 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
         permissions: PermissionPolicy,
         interactivePermissions: Bool
     ) throws -> [String] {
+        if turn.forkOnResume && turn.resumeToken == nil {
+            throw SkynetError.executionFailed(reason: "Claude fork requires a source session ID.")
+        }
         var arguments: [String] = [
             "--print",
             "--input-format", "stream-json",
@@ -46,6 +49,7 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
         }
         if let resumeToken = turn.resumeToken {
             arguments += ["--resume", resumeToken]
+            if turn.forkOnResume { arguments.append("--fork-session") }
         }
         // Permission policy → CLI flags. Rules pass through as native
         // Claude Code permission patterns; the default effect picks the

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct TranscriptMessageView: View {
     let message: Message
+    let imageData: (ImageAttachment) -> Data?
     @AppStorage(AppPreferenceKey.showTimestamps) private var showTimestamps = true
 
     var body: some View {
@@ -12,7 +13,11 @@ struct TranscriptMessageView: View {
             VStack(alignment: message.origin == .user ? .trailing : .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(message.content.indices, id: \.self) { index in
-                        TranscriptBlockView(block: message.content[index], rendersMarkdown: message.origin != .user)
+                        TranscriptBlockView(
+                            block: message.content[index],
+                            rendersMarkdown: message.origin != .user,
+                            imageData: imageData
+                        )
                     }
                 }
                 .padding(message.origin == .user ? 14 : 0)
@@ -51,6 +56,7 @@ private struct MessageMetadata: View {
 private struct TranscriptBlockView: View {
     let block: ContentBlock
     let rendersMarkdown: Bool
+    let imageData: (ImageAttachment) -> Data?
 
     var body: some View {
         switch block {
@@ -59,7 +65,7 @@ private struct TranscriptBlockView: View {
         case .thinking(let text, _):
             ReasoningBlockView(text: text)
         case .image(let attachment):
-            AttachmentImageView(attachment: attachment)
+            AttachmentImageView(attachment: attachment, imageData: imageData)
         case .toolCall(let call):
             ToolCallCard(call: call)
         case .toolResult(_, let content, let isError):
@@ -537,14 +543,18 @@ private struct ReasoningBlockView: View {
 
 private struct AttachmentImageView: View {
     let attachment: ImageAttachment
+    let imageData: (ImageAttachment) -> Data?
 
     var body: some View {
-        if case .inline(let data, _) = attachment.payload, let image = NSImage(data: data) {
+        if let data = imageData(attachment), let image = NSImage(data: data) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
                 .frame(maxHeight: 440)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+        } else {
+            Label("Image unavailable", systemImage: "photo")
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -611,6 +621,55 @@ private struct ToolResultCard: View {
 
     private var binding: Binding<Bool> {
         expansionBinding($expanded, fallback: expandByDefault || isError)
+    }
+}
+
+struct TranscriptToolRunView: View {
+    let steps: [TranscriptToolStep]
+    let collapseSingle: Bool
+    @State private var expanded = false
+
+    private var summary: TranscriptRunSummary { TranscriptRunSummary(steps: steps) }
+
+    var body: some View {
+        Group {
+            if steps.count == 1 && !collapseSingle {
+                step(steps[0])
+            } else {
+                DisclosureGroup(isExpanded: $expanded) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(steps.indices, id: \.self) { index in
+                            step(steps[index])
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    HStack(spacing: 8) {
+                        Label(summary.title, systemImage: summary.icon)
+                            .font(.callout)
+                        Text(summary.detail)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        if summary.hasError {
+                            Image(systemName: "exclamationmark.circle")
+                                .foregroundStyle(.red)
+                                .accessibilityLabel("Tool failed")
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: 860, alignment: .leading)
+    }
+
+    private func step(_ step: TranscriptToolStep) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let call = step.call { ToolCallCard(call: call) }
+            if let result = step.result {
+                ToolResultCard(content: result, isError: step.isError)
+            }
+        }
     }
 }
 
