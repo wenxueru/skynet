@@ -140,7 +140,14 @@ final class AppModel {
 
     var filteredProjects: [Project] {
         let query = normalizedSearchText
-        let matching = query.isEmpty ? projects : projects.filter { project in
+        let visibleProjects = projects.filter { project in
+            guard project.metadata["discovered"] == "true",
+                  project.metadata["pinned"] != "true" else { return true }
+            return sessions.contains {
+                $0.projectID == project.id && $0.isArchived != true
+            }
+        }
+        let matching = query.isEmpty ? visibleProjects : visibleProjects.filter { project in
             projectMatchesSearch(project, query: query)
                 || sessions.contains {
                     $0.projectID == project.id && sessionMatchesSearch($0, query: query)

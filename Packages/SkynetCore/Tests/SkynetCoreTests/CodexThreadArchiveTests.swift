@@ -66,6 +66,61 @@ struct CodexThreadArchiveTests {
         #expect(frames.last?["params"]?["threadId"]?.stringValue == "thread-123")
     }
 
+    @Test func deleteTimeoutAcceptsConfirmedNativeAbsence() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, _ in }),
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"error":{"code":-32600,"message":"thread not loaded: thread-123"}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        try await CodexThreadDelete.delete(
+            threadID: "thread-123", backend: backend, timeout: .milliseconds(10)
+        )
+
+        #expect(backend.launchedRequests.count == 2)
+        let verification = String(decoding: try #require(backend.launchedProcesses.last?.stdinWrites.first), as: UTF8.self)
+        let frames = verification.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8))
+        }
+        #expect(frames.last?["method"]?.stringValue == "thread/read")
+    }
+
+    @Test func deleteTimeoutRejectsNativeThreadStillPresent() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, _ in }),
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"result":{"thread":{"id":"thread-123"}}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        await #expect(throws: SkynetError.self) {
+            try await CodexThreadDelete.delete(
+                threadID: "thread-123", backend: backend, timeout: .milliseconds(10)
+            )
+        }
+        #expect(backend.launchedRequests.count == 2)
+    }
+
+    @Test func deleteRejectsUnrelatedReadError() async throws {
+        let backend = ScriptedExecutionBackend(scripts: [
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"error":{"message":"delete failed"}}"#)
+                process.finishStdout()
+            }),
+            .init(onStdin: { _, process in
+                process.emitStdout(#"{"id":1,"error":{"message":"permission denied"}}"#)
+                process.finishStdout()
+            }),
+        ])
+
+        await #expect(throws: SkynetError.self) {
+            try await CodexThreadDelete.delete(threadID: "thread-123", backend: backend)
+        }
+    }
+
     @Test func renameUsesProviderThreadSetName() async throws {
         let backend = ScriptedExecutionBackend(scripts: [
             .init(onStdin: { _, process in
