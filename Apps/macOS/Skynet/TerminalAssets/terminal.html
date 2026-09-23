@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="xterm.css">
+  <style>
+    html, body, #terminal { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: #1e1e1e; }
+    #terminal { padding: 8px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script src="xterm.js"></script>
+  <script src="addon-fit.js"></script>
+  <script>
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const terminal = new Terminal({
+      cursorBlink: true,
+      fontFamily: 'SFMono-Regular, Menlo, monospace',
+      fontSize: 13,
+      scrollback: 10000,
+      theme: dark
+        ? { background: '#1e1e1e', foreground: '#ececec' }
+        : { background: '#ffffff', foreground: '#202020' }
+    });
+    document.body.style.background = dark ? '#1e1e1e' : '#ffffff';
+    const fit = new FitAddon.FitAddon();
+    terminal.loadAddon(fit);
+    terminal.open(document.getElementById('terminal'));
+    const bridge = window.webkit.messageHandlers.terminal;
+    terminal.onData(data => bridge.postMessage({ type: 'input', data }));
+    terminal.onResize(({ cols, rows }) => bridge.postMessage({ type: 'resize', cols, rows }));
+    new ResizeObserver(() => fit.fit()).observe(document.getElementById('terminal'));
+    const decoder = new TextDecoder('utf-8');
+    window.writeTerminalBase64 = base64 => {
+      const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      terminal.write(decoder.decode(bytes, { stream: true }));
+    };
+    window.focusTerminal = () => terminal.focus();
+    fit.fit();
+    bridge.postMessage({ type: 'ready', cols: terminal.cols, rows: terminal.rows });
+  </script>
+</body>
+</html>

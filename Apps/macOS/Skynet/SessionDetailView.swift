@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct SessionDetailView: View {
     @Bindable var model: AppModel
     @State private var draft = ""
+    @State private var draftSaveTask: Task<Void, Never>?
     @State private var title = ""
     @State private var isEditingTitle = false
     @FocusState private var isTitleFocused: Bool
@@ -23,12 +24,32 @@ struct SessionDetailView: View {
     @State private var isCodexEffortPresented = false
     @State private var isCodexModelListPresented = false
     @State private var isOutlinePresented = false
+    @State private var terminalMode: IntegratedTerminalView.Mode?
+    @State private var isFilesPresented = false
+    @State private var isScratchlistPresented = false
+    @State private var isCustomSchedulePresented = false
+    @State private var customScheduleDate = Date().addingTimeInterval(30 * 60)
+    @State private var pendingSchedule: PendingSchedule?
+    @State private var editingScratchID: UUID?
+    @State private var scratchEditText = ""
     @State private var outlineQuery = ""
     @State private var outlineJump: OutlineJump?
 
     private struct OutlineJump {
         let nonce = UUID()
         let groupID: String
+    }
+
+    private enum PendingSchedule: Equatable {
+        case minutes(Int)
+        case absolute(Date)
+
+        func fireDate(from now: Date) -> Date {
+            switch self {
+            case .minutes(let minutes): now.addingTimeInterval(TimeInterval(minutes * 60))
+            case .absolute(let date): date
+            }
+        }
     }
 
     private struct OutlineEntry: Identifiable {
@@ -54,8 +75,17 @@ struct SessionDetailView: View {
                     .padding(.bottom, 92)
             }
         }
-        .onAppear { title = model.selectedSession?.title ?? "New session" }
-        .onChange(of: model.selectedSessionID) { _, _ in
+        .onAppear {
+            title = model.selectedSession?.title ?? "New session"
+            restoreComposerDraft(for: model.selectedSessionID)
+        }
+        .onChange(of: model.selectedSessionID) { oldID, newID in
+            draftSaveTask?.cancel()
+            if let oldID, model.sessions.contains(where: { $0.id == oldID }) {
+                model.saveComposerDraft(draft, attachments: model.pendingAttachments, for: oldID)
+            }
+            restoreComposerDraft(for: newID)
+            pendingSchedule = nil
             isEditingTitle = false
             isTitleFocused = false
             title = model.selectedSession?.title ?? "New session"
@@ -71,6 +101,14 @@ struct SessionDetailView: View {
         .onChange(of: draft) { _, _ in
             selectedSuggestionIndex = 0
             dismissedCompletion = nil
+            scheduleDraftSave()
+        }
+        .onChange(of: model.pendingAttachments) { _, _ in scheduleDraftSave() }
+        .onDisappear {
+            draftSaveTask?.cancel()
+            if let sessionID = model.selectedSessionID {
+                model.saveComposerDraft(draft, attachments: model.pendingAttachments, for: sessionID)
+            }
         }
         .task(id: composerCatalogID) {
             composerItems = await ComposerCatalog.load(
@@ -118,6 +156,43 @@ struct SessionDetailView: View {
                 urls.forEach(model.attachImage)
             }
         }
+        .sheet(item: $terminalMode) { mode in
+            if let session = model.selectedSession {
+                IntegratedTerminalView(
+                    mode: mode,
+                    session: session,
+                    provider: model.selectedProvider
+                )
+            }
+        }
+        .sheet(isPresented: $isFilesPresented) {
+            if let session = model.selectedSession,
+               let root = model.selectedProject?.rootPath ?? session.workingDirectory {
+                SessionFilesView(session: session, rootPath: root) { path in
+                    let reference = "`\(path)`"
+                    draft += draft.isEmpty ? reference : " \(reference)"
+                }
+            }
+        }
+        .popover(isPresented: $isCustomSchedulePresented) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Schedule message").font(.headline)
+                DatePicker(
+                    "Send at", selection: $customScheduleDate,
+                    in: Date().addingTimeInterval(60)...Date().addingTimeInterval(7 * 86_400)
+                )
+                HStack {
+                    Button("Cancel") { isCustomSchedulePresented = false }
+                    Spacer()
+                    Button("Use time") {
+                        pendingSchedule = .absolute(customScheduleDate)
+                        isCustomSchedulePresented = false
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 340)
+        }
     }
 
     private var header: some View {
@@ -148,6 +223,23 @@ struct SessionDetailView: View {
             if model.isRunning {
                 ProgressView().controlSize(.small)
             }
+            Button { isFilesPresented = true } label: {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Browse project files")
+            .disabled((model.selectedProject?.rootPath ?? model.selectedSession?.workingDirectory) == nil)
+            Menu {
+                Button("Shell terminal") { terminalMode = .shell }
+                Button("Agent terminal") { terminalMode = .agent }
+                    .disabled(model.isRunning || model.selectedSession?.providerResumeToken == nil)
+            } label: {
+                Image(systemName: "terminal")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Terminal")
             Button {
                 isOutlinePresented.toggle()
             } label: {
@@ -219,7 +311,13 @@ struct SessionDetailView: View {
                         Group {
                             switch group {
                             case .message(_, let message):
-                                TranscriptMessageView(message: message, imageData: model.imageData)
+                                TranscriptMessageView(
+                                    message: message,
+                                    imageData: model.imageData,
+                                    onQuote: { quote in
+                                        draft += (draft.isEmpty ? "" : "\n\n") + quote + "\n\n"
+                                    }
+                                )
                             case .tools(_, let steps, let collapseSingle):
                                 TranscriptToolRunView(steps: steps, collapseSingle: collapseSingle)
                             }
@@ -301,13 +399,80 @@ struct SessionDetailView: View {
 
     private var composer: some View {
         VStack(spacing: 8) {
+            if !model.queuedPrompts.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Queued · \(model.queuedPrompts.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if !model.isRunning, let sessionID = model.selectedSessionID,
+                           model.queuedPrompts.contains(where: {
+                               $0.scheduledAt == nil && $0.dispatchStartedAt == nil
+                           }) {
+                            Button("Send next") { model.sendNextQueued(for: sessionID) }
+                                .font(.caption)
+                        }
+                    }
+                    ForEach(model.queuedPrompts.prefix(3)) { entry in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.text.isEmpty ? "Image message" : entry.text)
+                                    .lineLimit(1)
+                                    .font(.caption)
+                                if entry.dispatchStartedAt != nil {
+                                    Text("Delivery unconfirmed · take back to retry")
+                                        .font(.caption2).foregroundStyle(.orange)
+                                } else if let scheduledAt = entry.scheduledAt {
+                                    Text("Scheduled for \(scheduledAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                guard let editable = model.takeQueuedPrompt(entry.id) else { return }
+                                let separator = draft.isEmpty || editable.text.isEmpty ? "" : "\n\n"
+                                draft += separator + editable.text
+                                model.pendingAttachments += editable.attachments
+                            } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Edit queued message in composer")
+                            .disabled(entry.dispatchStartedAt != nil
+                                && model.scheduledDispatchingSessionID == model.selectedSessionID)
+                            Button {
+                                model.removeQueuedPrompt(entry.id)
+                            } label: {
+                                Image(systemName: "xmark")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove from queue")
+                            .disabled(entry.dispatchStartedAt != nil
+                                && model.scheduledDispatchingSessionID == model.selectedSessionID)
+                        }
+                    }
+                    if model.queuedPrompts.count > 3 {
+                        Text("+\(model.queuedPrompts.count - 3) more")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            }
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal) {
                     HStack {
                         ForEach(model.pendingAttachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment) {
-                                model.removeAttachment(attachment.id)
-                            }
+                            AttachmentThumbnail(
+                                attachment: attachment,
+                                data: model.imageData(for: attachment),
+                                remove: { model.removeAttachment(attachment.id) },
+                                moveLeft: { model.moveAttachment(attachment.id, by: -1) },
+                                moveRight: { model.moveAttachment(attachment.id, by: 1) }
+                            )
                         }
                     }
                 }
@@ -341,6 +506,45 @@ struct SessionDetailView: View {
                     .buttonStyle(.plain)
                     .help("Attach image")
 
+                    Button {
+                        isScratchlistPresented.toggle()
+                    } label: {
+                        Image(systemName: "tray")
+                            .overlay(alignment: .topTrailing) {
+                                if !model.scratchlist.isEmpty {
+                                    Circle().fill(.blue).frame(width: 6, height: 6)
+                                        .offset(x: 3, y: -3)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Scratchlist")
+                    .popover(isPresented: $isScratchlistPresented, arrowEdge: .top) {
+                        scratchlistPanel
+                    }
+
+                    Menu {
+                        Button("Send now") { pendingSchedule = nil }
+                        Divider()
+                        Button("In 5 minutes") { pendingSchedule = .minutes(5) }
+                        Button("In 30 minutes") { pendingSchedule = .minutes(30) }
+                        Button("In 1 hour") { pendingSchedule = .minutes(60) }
+                        Button("In 4 hours") { pendingSchedule = .minutes(240) }
+                        Divider()
+                        Button("Choose time…") {
+                            customScheduleDate = Date().addingTimeInterval(30 * 60)
+                            isCustomSchedulePresented = true
+                        }
+                    } label: {
+                        Image(systemName: pendingSchedule == nil ? "clock" : "clock.fill")
+                            .foregroundStyle(pendingSchedule == nil ? Color.secondary : Color.blue)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help(pendingSchedule.map {
+                        "Scheduled for \($0.fireDate(from: Date()).formatted(date: .abbreviated, time: .shortened))"
+                    } ?? "Schedule send")
+
                     permissionMenu
                     Spacer()
                     if model.selectedProvider?.kind == .codex {
@@ -349,14 +553,25 @@ struct SessionDetailView: View {
                         modelMenu
                         effortMenu
                     }
-                    Button(action: model.isRunning ? model.cancel : submit) {
-                        Image(systemName: model.isRunning ? "stop.fill" : "arrow.up")
+                    if model.isRunning {
+                        Button(action: model.cancel) {
+                            Image(systemName: "stop.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop current turn")
+                    }
+                    Button(action: submit) {
+                        Image(systemName: model.isRunning ? "text.badge.plus" : "arrow.up")
                             .foregroundStyle(.white)
                             .frame(width: 34, height: 34)
-                            .background(model.isRunning ? .red : .blue, in: Circle())
+                            .background(.blue, in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!model.isRunning && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty)
+                    .help(pendingSchedule == nil
+                          ? (model.isRunning ? "Queue message" : "Send") : "Schedule message")
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              && model.pendingAttachments.isEmpty)
                 }
             }
             .padding(12)
@@ -371,6 +586,96 @@ struct SessionDetailView: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private var scratchlistPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Scratchlist").font(.headline)
+                Spacer()
+                Button("Save draft") {
+                    if model.parkDraft(draft) { draft = "" }
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          && model.pendingAttachments.isEmpty)
+            }
+            Text("Saved here until you choose to use them. Nothing sends automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if model.scratchlist.isEmpty {
+                ContentUnavailableView("No saved drafts", systemImage: "tray")
+                    .frame(height: 120)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(model.scratchlist) { entry in
+                            VStack(alignment: .leading, spacing: 8) {
+                                if editingScratchID == entry.id {
+                                    TextEditor(text: $scratchEditText)
+                                        .frame(height: 70)
+                                        .font(.callout)
+                                } else {
+                                    Text(entry.text.isEmpty ? "Images" : entry.text)
+                                        .lineLimit(4)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if !entry.attachments.isEmpty {
+                                    Text("\(entry.attachments.count) image(s)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                HStack {
+                                    Text(entry.createdAt, style: .relative)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                    Spacer()
+                                    if editingScratchID == entry.id {
+                                        Button("Save") {
+                                            model.updateScratchlistEntry(entry.id, text: scratchEditText)
+                                            editingScratchID = nil
+                                        }
+                                        Button("Cancel") { editingScratchID = nil }
+                                    } else {
+                                        Button("Use") {
+                                            let separator = draft.isEmpty || entry.text.isEmpty ? "" : "\n\n"
+                                            draft += separator + entry.text
+                                            model.pendingAttachments += entry.attachments
+                                            model.removeScratchlistEntry(entry.id)
+                                            isScratchlistPresented = false
+                                        }
+                                        Button("Edit") {
+                                            scratchEditText = entry.text
+                                            editingScratchID = entry.id
+                                        }
+                                        Button {
+                                            model.moveScratchlistEntry(entry.id, by: -1)
+                                        } label: {
+                                            Image(systemName: "arrow.up")
+                                        }
+                                        .disabled(model.scratchlist.first?.id == entry.id)
+                                        .help("Move up")
+                                        Button {
+                                            model.moveScratchlistEntry(entry.id, by: 1)
+                                        } label: {
+                                            Image(systemName: "arrow.down")
+                                        }
+                                        .disabled(model.scratchlist.last?.id == entry.id)
+                                        .help("Move down")
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        model.removeScratchlistEntry(entry.id)
+                                    }
+                                }
+                            }
+                            .padding(10)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 360, height: 340)
     }
 
     private var modelMenu: some View {
@@ -604,12 +909,26 @@ struct SessionDetailView: View {
     private var visibleSuggestions: [ComposerSuggestion] {
         guard let context = completionContext,
               context.fingerprint != dismissedCompletion else { return [] }
-        return composerItems.filter { item in
+        let items = context.trigger == "@"
+            ? model.sessions
+                .filter { $0.id != model.selectedSessionID && $0.messageCount > 0 && $0.isArchived != true }
+                .sorted { $0.updatedAt > $1.updatedAt }
+                .prefix(100)
+                .map { session in
+                    ComposerSuggestion(
+                        kind: .session,
+                        name: session.title ?? "Untitled session",
+                        detail: session.providerID.rawValue,
+                        source: session.id.description
+                    )
+                }
+            : composerItems
+        return Array(items.filter { item in
             guard item.kind.trigger == context.trigger else { return false }
             return context.query.isEmpty
                 || item.title.localizedCaseInsensitiveContains(context.query)
                 || item.detail.localizedCaseInsensitiveContains(context.query)
-        }
+        }.prefix(20))
     }
 
     private var composerCatalogID: String {
@@ -625,7 +944,8 @@ struct SessionDetailView: View {
 
     private var permissionRequestDescription: String {
         guard let request = model.pendingPermissionRequest else { return "" }
-        return [request.summary, request.primaryArgument].compactMap { $0 }.joined(separator: "\n\n")
+        return [model.pendingPermissionSessionTitle, request.summary, request.primaryArgument]
+            .compactMap { $0 }.joined(separator: "\n\n")
     }
 
     private func moveSuggestion(_ offset: Int) {
@@ -643,7 +963,9 @@ struct SessionDetailView: View {
     private func acceptSuggestion(_ suggestion: ComposerSuggestion) {
         guard let context = completionContext else { return }
         let mutable = NSMutableString(string: draft)
-        let replacement = suggestion.title + " "
+        let replacement = suggestion.kind == .session
+            ? "See session \(String(reflecting: suggestion.name)) [[session:\(suggestion.source)]] for context. "
+            : suggestion.title + " "
         mutable.replaceCharacters(in: context.range, with: replacement)
         draft = mutable as String
         composerSelection = NSRange(
@@ -848,10 +1170,38 @@ struct SessionDetailView: View {
 
     private func submit() {
         let prompt = draft
-        guard !model.isRunning else { return }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pendingAttachments.isEmpty else { return }
+        if let pendingSchedule {
+            if model.enqueueDraft(prompt, scheduledAt: pendingSchedule.fireDate(from: Date())) {
+                draft = ""
+                self.pendingSchedule = nil
+            }
+            return
+        }
+        if model.isRunning {
+            if model.enqueueDraft(prompt) { draft = "" }
+            return
+        }
         draft = ""
         model.send(prompt)
+    }
+
+    private func restoreComposerDraft(for sessionID: SessionID?) {
+        let saved = sessionID.flatMap(model.loadComposerDraft)
+        draft = saved?.text ?? ""
+        model.pendingAttachments = saved?.attachments ?? []
+    }
+
+    private func scheduleDraftSave() {
+        draftSaveTask?.cancel()
+        guard let sessionID = model.selectedSessionID else { return }
+        let text = draft
+        let attachments = model.pendingAttachments
+        draftSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, model.selectedSessionID == sessionID else { return }
+            model.saveComposerDraft(text, attachments: attachments, for: sessionID)
+        }
     }
 
     private func scrollToLatestIfNeeded(using proxy: ScrollViewProxy) {
@@ -868,7 +1218,7 @@ private struct BottomPositionKey: PreferenceKey {
     }
 }
 
-private enum ProviderModelDiscovery {
+enum ProviderModelDiscovery {
     struct Catalog: Sendable {
         var models: [ModelDescriptor] = []
         var defaultEfforts: [ModelID: ReasoningEffort] = [:]
@@ -882,12 +1232,14 @@ private enum ProviderModelDiscovery {
             let visibility: String
             let supportedReasoningLevels: [Level]
             let defaultReasoningLevel: String?
+            let contextWindow: Int?
 
             enum CodingKeys: String, CodingKey {
                 case slug, visibility
                 case displayName = "display_name"
                 case supportedReasoningLevels = "supported_reasoning_levels"
                 case defaultReasoningLevel = "default_reasoning_level"
+                case contextWindow = "context_window"
             }
         }
         let models: [Entry]
@@ -914,7 +1266,8 @@ private enum ProviderModelDiscovery {
                     displayName: entry.displayName,
                     supportedEfforts: entry.supportedReasoningLevels.compactMap {
                         ReasoningEffort(rawValue: $0.effort)
-                    }
+                    },
+                    contextWindowTokens: entry.contextWindow
                 )
             }
             return Catalog(models: models, defaultEfforts: defaults)
@@ -928,17 +1281,25 @@ private enum ProviderModelDiscovery {
 
 private struct AttachmentThumbnail: View {
     let attachment: ImageAttachment
+    let data: Data?
     let remove: () -> Void
+    let moveLeft: () -> Void
+    let moveRight: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            if case .inline(let data, _) = attachment.payload, let image = NSImage(data: data) {
+            if let data, let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().scaledToFill().frame(width: 58, height: 58).clipped()
             }
             Button(action: remove) { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.plain)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contextMenu {
+            Button("Move left", action: moveLeft)
+            Button("Move right", action: moveRight)
+            Button("Remove", role: .destructive, action: remove)
+        }
     }
 }
 
@@ -959,7 +1320,7 @@ private struct ComposerCompletionContext {
         }
         let tokenRange = NSRange(location: start, length: selection.location - start)
         let token = nsText.substring(with: tokenRange)
-        guard let first = token.first, first == "$" || first == "/" else { return nil }
+        guard let first = token.first, first == "$" || first == "/" || first == "@" else { return nil }
         trigger = first
         query = String(token.dropFirst())
         range = tokenRange
@@ -972,8 +1333,15 @@ private struct ComposerSuggestion: Identifiable, Sendable {
     enum Kind: String, Sendable {
         case skill
         case command
+        case session
 
-        var trigger: Character { self == .skill ? "$" : "/" }
+        var trigger: Character {
+            switch self {
+            case .skill: "$"
+            case .command: "/"
+            case .session: "@"
+            }
+        }
     }
 
     let kind: Kind

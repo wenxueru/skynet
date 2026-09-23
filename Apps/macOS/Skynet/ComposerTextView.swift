@@ -34,6 +34,7 @@ struct ComposerTextView: NSViewRepresentable {
         view.isRichText = false
         view.textContainerInset = NSSize(width: 4, height: 7)
         view.textContainer?.widthTracksTextView = true
+        view.registerForDraggedTypes([.fileURL, .png, .tiff])
         scroll.documentView = view
         return scroll
     }
@@ -101,14 +102,29 @@ private final class ComposerNativeTextView: NSTextView {
     var onPasteImage: ((Data) -> Void)?
     var onPasteFiles: (([URL]) -> Void)?
 
-    override func paste(_ sender: Any?) {
-        let board = NSPasteboard.general
-        let imageFiles = (board.readObjects(
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        imageFileURLs(on: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let files = imageFileURLs(on: sender.draggingPasteboard)
+        guard !files.isEmpty else { return super.performDragOperation(sender) }
+        onPasteFiles?(files)
+        return true
+    }
+
+    private func imageFileURLs(on board: NSPasteboard) -> [URL] {
+        (board.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL] ?? []).filter {
             UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true
         }
+    }
+
+    override func paste(_ sender: Any?) {
+        let board = NSPasteboard.general
+        let imageFiles = imageFileURLs(on: board)
         if !imageFiles.isEmpty {
             onPasteFiles?(imageFiles)
             return

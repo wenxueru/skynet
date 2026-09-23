@@ -26,6 +26,14 @@ enum CodexAppServerBridge {
         ])
     }
 
+    static func readThreadRequest(threadID: String) throws -> Data {
+        try initialization() + encode([
+            "id": 1,
+            "method": "thread/read",
+            "params": ["threadId": .string(threadID), "includeTurns": false],
+        ])
+    }
+
     static func deleteRequest(threadID: String) throws -> Data {
         try initialization() + encode([
             "id": 1,
