@@ -42,6 +42,9 @@ struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
         context.coordinator.parent = self
+        // Do not replace NSTextView's contents while an IME owns a marked-text
+        // composition; doing so cancels the in-progress input method session.
+        guard !view.hasMarkedText() else { return }
         if view.string != text { view.string = text }
         if view.selectedRange() != selection, NSMaxRange(selection) <= view.string.utf16.count {
             view.setSelectedRange(selection)
