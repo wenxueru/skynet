@@ -6,13 +6,6 @@ import SkynetCore
 @MainActor
 @Observable
 final class AppModel {
-    struct ScratchlistEntry: Codable, Identifiable {
-        var id = UUID()
-        var text: String
-        var attachments: [ImageAttachment]
-        var createdAt = Date()
-    }
-
     struct QueuedPrompt: Codable, Identifiable {
         var id = UUID()
         var text: String
@@ -64,8 +57,11 @@ final class AppModel {
     var workingSince: Date?
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
-    var scratchlist: [ScratchlistEntry] = []
     var queuedPrompts: [QueuedPrompt] = []
+    private(set) var steeringQueuedPromptID: UUID?
+    var canSteerQueuedPrompt: Bool {
+        isRunning && selectedSessionID == activeTurnSessionID && steeringQueuedPromptID == nil
+    }
     var scheduledDispatchingSessionID: SessionID? { scheduledDispatchSessionID }
     var pendingPermissionRequest: PermissionRequest?
     var pendingPermissionSessionTitle: String?
@@ -80,6 +76,7 @@ final class AppModel {
 
     private let store: JSONDiskStore?
     private var activeSession: AgentSession?
+    private var activeTurnSessionID: SessionID?
     private var streamTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var transcriptTask: Task<Void, Never>?
@@ -234,7 +231,6 @@ final class AppModel {
             }
             if let selectedSessionID {
                 messages = try store.loadMessages(for: selectedSessionID)
-                loadScratchlist(for: selectedSessionID)
                 loadQueue(for: selectedSessionID)
             }
         } catch {
@@ -272,7 +268,6 @@ final class AppModel {
         } else {
             selectedSessionID = nil
             messages = []
-            scratchlist = []
             queuedPrompts = []
         }
     }
@@ -280,7 +275,6 @@ final class AppModel {
     func select(session: SessionRecord) {
         selectedProjectID = session.projectID
         selectedSessionID = session.id
-        loadScratchlist(for: session.id)
         loadQueue(for: session.id)
         if session.markedUnreadAt != nil {
             var updated = session
@@ -384,7 +378,6 @@ final class AppModel {
         transcriptTask?.cancel()
         transcriptTask = nil
         messages = []
-        scratchlist = []
         queuedPrompts = []
         isLoadingTranscript = false
         resetLiveState()
@@ -834,31 +827,6 @@ final class AppModel {
         pendingAttachments.swapAt(index, index + offset)
     }
 
-    func parkDraft(_ text: String) -> Bool {
-        guard let sessionID = selectedSessionID else { return false }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
-        guard scratchlist.count < 200 else {
-            errorMessage = "Scratchlist is full (200 entries)."
-            return false
-        }
-        do {
-            let attachments = try storedAttachments(pendingAttachments)
-            let entry = ScratchlistEntry(
-                text: String(trimmed.prefix(10_000)), attachments: attachments
-            )
-            var updated = scratchlist
-            updated.insert(entry, at: 0)
-            try persistScratchlist(updated, for: sessionID)
-            scratchlist = updated
-            pendingAttachments = []
-            return true
-        } catch {
-            errorMessage = "Could not save Scratchlist: \(error.localizedDescription)"
-            return false
-        }
-    }
-
     func enqueueDraft(_ text: String, scheduledAt: Date? = nil) -> Bool {
         guard let sessionID = selectedSessionID else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -903,6 +871,58 @@ final class AppModel {
             return
         }
         removeQueuedPrompt(id, for: sessionID)
+    }
+
+    func moveQueuedPrompt(_ id: UUID, by offset: Int) {
+        guard let sessionID = selectedSessionID,
+              let (source, destination) = queuedPromptMoveIndices(for: id, by: offset) else { return }
+        var updated = queuedPrompts
+        updated.swapAt(source, destination)
+        do {
+            try persistQueue(updated, for: sessionID)
+            queuedPrompts = updated
+        } catch {
+            errorMessage = "Could not reorder queue: \(error.localizedDescription)"
+        }
+    }
+
+    func canMoveQueuedPrompt(_ id: UUID, by offset: Int) -> Bool {
+        queuedPromptMoveIndices(for: id, by: offset) != nil
+    }
+
+    private func queuedPromptMoveIndices(for id: UUID, by offset: Int) -> (Int, Int)? {
+        guard let source = queuedPrompts.firstIndex(where: { $0.id == id }) else { return nil }
+        let destination = source + offset
+        guard queuedPrompts.indices.contains(destination),
+              canReorder(queuedPrompts[source]), canReorder(queuedPrompts[destination]) else {
+            return nil
+        }
+        return (source, destination)
+    }
+
+    func steerQueuedPrompt(_ id: UUID) {
+        guard canSteerQueuedPrompt, let sessionID = selectedSessionID,
+              let index = queuedPrompts.firstIndex(where: { $0.id == id }),
+              canReorder(queuedPrompts[index]) else { return }
+        let entry = queuedPrompts[index]
+        if index > 0 {
+            var updated = queuedPrompts
+            updated.remove(at: index)
+            updated.insert(entry, at: 0)
+            do {
+                try persistQueue(updated, for: sessionID)
+                queuedPrompts = updated
+            } catch {
+                errorMessage = "Could not prioritize queued message: \(error.localizedDescription)"
+                return
+            }
+        }
+        steeringQueuedPromptID = id
+        cancel()
+    }
+
+    private func canReorder(_ entry: QueuedPrompt) -> Bool {
+        entry.scheduledAt == nil && entry.dispatchStartedAt == nil
     }
 
     func takeQueuedPrompt(_ id: UUID) -> QueuedPrompt? {
@@ -1012,6 +1032,11 @@ final class AppModel {
               let entry = queuedPrompts.first(where: {
                   $0.scheduledAt == nil && $0.dispatchStartedAt == nil
               }) else { return }
+        sendQueuedPrompt(entry, for: sessionID)
+    }
+
+    private func sendQueuedPrompt(_ entry: QueuedPrompt, for sessionID: SessionID) {
+        guard selectedSessionID == sessionID else { return }
         let composerAttachments = pendingAttachments
         pendingAttachments = entry.attachments
         send(entry.text, queuedEntry: entry)
@@ -1078,66 +1103,10 @@ final class AppModel {
         }
     }
 
-    func removeScratchlistEntry(_ id: UUID) {
-        guard let sessionID = selectedSessionID else { return }
-        let updated = scratchlist.filter { $0.id != id }
-        do {
-            try persistScratchlist(updated, for: sessionID)
-            scratchlist = updated
-        } catch {
-            errorMessage = "Could not update Scratchlist: \(error.localizedDescription)"
-        }
-    }
-
-    func updateScratchlistEntry(_ id: UUID, text: String) {
-        guard let sessionID = selectedSessionID,
-              let index = scratchlist.firstIndex(where: { $0.id == id }) else { return }
-        var updated = scratchlist
-        updated[index].text = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(10_000))
-        do {
-            try persistScratchlist(updated, for: sessionID)
-            scratchlist = updated
-        } catch {
-            errorMessage = "Could not update Scratchlist: \(error.localizedDescription)"
-        }
-    }
-
-    func moveScratchlistEntry(_ id: UUID, by offset: Int) {
-        guard let sessionID = selectedSessionID,
-              let index = scratchlist.firstIndex(where: { $0.id == id }),
-              scratchlist.indices.contains(index + offset) else { return }
-        var updated = scratchlist
-        updated.swapAt(index, index + offset)
-        do {
-            try persistScratchlist(updated, for: sessionID)
-            scratchlist = updated
-        } catch {
-            errorMessage = "Could not reorder Scratchlist: \(error.localizedDescription)"
-        }
-    }
-
     private func scratchlistURL(for sessionID: SessionID) -> URL? {
         storageDirectoryURL?
             .appendingPathComponent("scratchlists", isDirectory: true)
             .appendingPathComponent("\(sessionID.value.uuidString).json")
-    }
-
-    private func loadScratchlist(for sessionID: SessionID) {
-        guard let url = scratchlistURL(for: sessionID),
-              let data = try? Data(contentsOf: url),
-              let entries = try? JSONDecoder().decode([ScratchlistEntry].self, from: data) else {
-            scratchlist = []
-            return
-        }
-        scratchlist = Array(entries.prefix(200))
-    }
-
-    private func persistScratchlist(_ entries: [ScratchlistEntry], for sessionID: SessionID) throws {
-        guard let url = scratchlistURL(for: sessionID) else { throw CocoaError(.fileNoSuchFile) }
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try JSONEncoder().encode(entries).write(to: url, options: .atomic)
     }
 
     func send(_ prompt: String, queuedEntry: QueuedPrompt? = nil) {
@@ -1152,6 +1121,7 @@ final class AppModel {
         pendingAttachments = []
         resetLiveState()
         isRunning = true
+        activeTurnSessionID = record.id
         workingSince = Date()
         errorMessage = nil
 
@@ -1162,10 +1132,19 @@ final class AppModel {
             var completedTurn = false
             defer {
                 isRunning = false
+                activeTurnSessionID = nil
                 workingSince = nil
                 activeSession = nil
                 streamTask = nil
-                if completedTurn { sendNextQueued(for: record.id) }
+                let steeredID = steeringQueuedPromptID
+                steeringQueuedPromptID = nil
+                if let steeredID,
+                   !completedTurn,
+                   let entry = queueEntries(for: record.id).first(where: { $0.id == steeredID }) {
+                    sendQueuedPrompt(entry, for: record.id)
+                } else if completedTurn {
+                    sendNextQueued(for: record.id)
+                }
             }
             do {
                 let session = try AgentSession(
@@ -1213,7 +1192,9 @@ final class AppModel {
                 messages = try store.loadMessages(for: updated.id)
                 completedTurn = true
             } catch {
-                errorMessage = error.localizedDescription
+                if !(error is CancellationError), steeringQueuedPromptID == nil {
+                    errorMessage = error.localizedDescription
+                }
                 if !didStartTurn {
                     if queuedEntry == nil {
                         pendingAttachments.insert(contentsOf: attachments, at: 0)

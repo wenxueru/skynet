@@ -28,12 +28,9 @@ struct SessionDetailView: View {
     @State private var isEnvironmentPresented = false
     @State private var terminalMode: IntegratedTerminalView.Mode?
     @State private var isFilesPresented = false
-    @State private var isScratchlistPresented = false
     @State private var isCustomSchedulePresented = false
     @State private var customScheduleDate = Date().addingTimeInterval(30 * 60)
     @State private var pendingSchedule: PendingSchedule?
-    @State private var editingScratchID: UUID?
-    @State private var scratchEditText = ""
     @State private var outlineQuery = ""
     @State private var outlineJump: OutlineJump?
 
@@ -219,9 +216,15 @@ struct SessionDetailView: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
+                .focusEffectDisabled()
                 .help("Rename session")
-                Spacer(minLength: 0)
             }
+            Spacer(minLength: 0)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    NSApp.keyWindow?.performZoom(nil)
+                }
             if model.isRunning {
                 ProgressView().controlSize(.small)
             }
@@ -621,49 +624,74 @@ struct SessionDetailView: View {
                                 .font(.caption)
                         }
                     }
-                    ForEach(model.queuedPrompts.prefix(3)) { entry in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.text.isEmpty ? "Image message" : entry.text)
-                                    .lineLimit(1)
-                                    .font(.caption)
-                                if entry.dispatchStartedAt != nil {
-                                    Text("Delivery unconfirmed · take back to retry")
-                                        .font(.caption2).foregroundStyle(.orange)
-                                } else if let scheduledAt = entry.scheduledAt {
-                                    Text("Scheduled for \(scheduledAt.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.caption2).foregroundStyle(.secondary)
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(model.queuedPrompts) { entry in
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.turn.down.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(entry.text.isEmpty ? "Image message" : entry.text)
+                                            .lineLimit(2)
+                                            .font(.callout)
+                                        if !entry.attachments.isEmpty {
+                                            Text("\(entry.attachments.count) image(s)")
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                        } else if entry.dispatchStartedAt != nil {
+                                            Text("Delivery unconfirmed · take back to retry")
+                                                .font(.caption2).foregroundStyle(.orange)
+                                        } else if let scheduledAt = entry.scheduledAt {
+                                            Text("Scheduled for \(scheduledAt.formatted(date: .abbreviated, time: .shortened))")
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer(minLength: 4)
+                                    if model.isRunning && entry.scheduledAt == nil {
+                                        Button("Steer") { model.steerQueuedPrompt(entry.id) }
+                                            .font(.callout)
+                                            .disabled(!model.canSteerQueuedPrompt || entry.dispatchStartedAt != nil)
+                                            .help("Stop the current reply and send this message next")
+                                    }
+                                    Button {
+                                        model.removeQueuedPrompt(entry.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Remove from queue")
+                                    .disabled(entry.dispatchStartedAt != nil
+                                        && model.scheduledDispatchingSessionID == model.selectedSessionID)
+                                    Menu {
+                                        Button("Edit in composer", systemImage: "pencil") {
+                                            guard let editable = model.takeQueuedPrompt(entry.id) else { return }
+                                            let separator = draft.isEmpty || editable.text.isEmpty ? "" : "\n\n"
+                                            draft += separator + editable.text
+                                            model.pendingAttachments += editable.attachments
+                                        }
+                                        Divider()
+                                        Button("Move up", systemImage: "arrow.up") {
+                                            model.moveQueuedPrompt(entry.id, by: -1)
+                                        }
+                                        .disabled(!model.canMoveQueuedPrompt(entry.id, by: -1))
+                                        Button("Move down", systemImage: "arrow.down") {
+                                            model.moveQueuedPrompt(entry.id, by: 1)
+                                        }
+                                        .disabled(!model.canMoveQueuedPrompt(entry.id, by: 1))
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                    .help("Queue message actions")
                                 }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
                             }
-                            Spacer()
-                            Button {
-                                guard let editable = model.takeQueuedPrompt(entry.id) else { return }
-                                let separator = draft.isEmpty || editable.text.isEmpty ? "" : "\n\n"
-                                draft += separator + editable.text
-                                model.pendingAttachments += editable.attachments
-                            } label: {
-                                Image(systemName: "pencil")
-                            }
-                            .buttonStyle(.plain)
-                            .help("Edit queued message in composer")
-                            .disabled(entry.dispatchStartedAt != nil
-                                && model.scheduledDispatchingSessionID == model.selectedSessionID)
-                            Button {
-                                model.removeQueuedPrompt(entry.id)
-                            } label: {
-                                Image(systemName: "xmark")
-                            }
-                            .buttonStyle(.plain)
-                            .help("Remove from queue")
-                            .disabled(entry.dispatchStartedAt != nil
-                                && model.scheduledDispatchingSessionID == model.selectedSessionID)
                         }
                     }
-                    if model.queuedPrompts.count > 3 {
-                        Text("+\(model.queuedPrompts.count - 3) more")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                    .frame(maxHeight: 180)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -712,23 +740,6 @@ struct SessionDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Attach image")
-
-                    Button {
-                        isScratchlistPresented.toggle()
-                    } label: {
-                        Image(systemName: "tray")
-                            .overlay(alignment: .topTrailing) {
-                                if !model.scratchlist.isEmpty {
-                                    Circle().fill(.blue).frame(width: 6, height: 6)
-                                        .offset(x: 3, y: -3)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .help("Scratchlist")
-                    .popover(isPresented: $isScratchlistPresented, arrowEdge: .top) {
-                        scratchlistPanel
-                    }
 
                     Menu {
                         Button("Send now") { pendingSchedule = nil }
@@ -793,96 +804,6 @@ struct SessionDetailView: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .background(.bar)
-    }
-
-    private var scratchlistPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Scratchlist").font(.headline)
-                Spacer()
-                Button("Save draft") {
-                    if model.parkDraft(draft) { draft = "" }
-                }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          && model.pendingAttachments.isEmpty)
-            }
-            Text("Saved here until you choose to use them. Nothing sends automatically.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if model.scratchlist.isEmpty {
-                ContentUnavailableView("No saved drafts", systemImage: "tray")
-                    .frame(height: 120)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.scratchlist) { entry in
-                            VStack(alignment: .leading, spacing: 8) {
-                                if editingScratchID == entry.id {
-                                    TextEditor(text: $scratchEditText)
-                                        .frame(height: 70)
-                                        .font(.callout)
-                                } else {
-                                    Text(entry.text.isEmpty ? "Images" : entry.text)
-                                        .lineLimit(4)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                if !entry.attachments.isEmpty {
-                                    Text("\(entry.attachments.count) image(s)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                HStack {
-                                    Text(entry.createdAt, style: .relative)
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                    Spacer()
-                                    if editingScratchID == entry.id {
-                                        Button("Save") {
-                                            model.updateScratchlistEntry(entry.id, text: scratchEditText)
-                                            editingScratchID = nil
-                                        }
-                                        Button("Cancel") { editingScratchID = nil }
-                                    } else {
-                                        Button("Use") {
-                                            let separator = draft.isEmpty || entry.text.isEmpty ? "" : "\n\n"
-                                            draft += separator + entry.text
-                                            model.pendingAttachments += entry.attachments
-                                            model.removeScratchlistEntry(entry.id)
-                                            isScratchlistPresented = false
-                                        }
-                                        Button("Edit") {
-                                            scratchEditText = entry.text
-                                            editingScratchID = entry.id
-                                        }
-                                        Button {
-                                            model.moveScratchlistEntry(entry.id, by: -1)
-                                        } label: {
-                                            Image(systemName: "arrow.up")
-                                        }
-                                        .disabled(model.scratchlist.first?.id == entry.id)
-                                        .help("Move up")
-                                        Button {
-                                            model.moveScratchlistEntry(entry.id, by: 1)
-                                        } label: {
-                                            Image(systemName: "arrow.down")
-                                        }
-                                        .disabled(model.scratchlist.last?.id == entry.id)
-                                        .help("Move down")
-                                    }
-                                    Button("Delete", role: .destructive) {
-                                        model.removeScratchlistEntry(entry.id)
-                                    }
-                                }
-                            }
-                            .padding(10)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .frame(width: 360, height: 340)
     }
 
     private var modelMenu: some View {

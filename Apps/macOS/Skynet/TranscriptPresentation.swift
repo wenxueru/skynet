@@ -56,12 +56,6 @@ struct TranscriptMessageView: View {
                 onQuote(message.plainText.split(separator: "\n", omittingEmptySubsequences: false)
                     .map { "> \($0)" }.joined(separator: "\n"))
             }
-            ShareLink(item: message.plainText) {
-                Label("Share text…", systemImage: "square.and.arrow.up")
-            }
-        }
-        Button("Copy message ID") {
-            NSPasteboard.general.setString(message.id.description)
         }
     }
 }
