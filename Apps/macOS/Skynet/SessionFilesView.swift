@@ -10,7 +10,7 @@ struct SessionFilesView: View {
     let onReference: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var tab: Tab = .changes
+    @State private var tab: Tab
     @State private var directory: String
     @State private var entries: [FileEntry] = []
     @State private var selected: FileEntry?
@@ -21,13 +21,19 @@ struct SessionFilesView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
-    private enum Tab: String, CaseIterable { case changes = "Changes", directories = "Directories" }
+    enum Tab: String, CaseIterable { case changes = "Changes", directories = "Directories" }
     private enum Sort: String, CaseIterable { case name = "Name", modified = "Modified", size = "Size" }
 
-    init(session: SessionRecord, rootPath: String, onReference: @escaping (String) -> Void) {
+    init(
+        session: SessionRecord,
+        rootPath: String,
+        initialTab: Tab = .changes,
+        onReference: @escaping (String) -> Void
+    ) {
         self.session = session
         self.rootPath = rootPath
         self.onReference = onReference
+        _tab = State(initialValue: initialTab)
         _directory = State(initialValue: rootPath)
     }
 

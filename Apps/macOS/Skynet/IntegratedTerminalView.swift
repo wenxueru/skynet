@@ -5,7 +5,7 @@ import WebKit
 
 struct IntegratedTerminalView: View {
     enum Mode: String, Identifiable {
-        case shell, agent
+        case shell, agent, sideChat
         var id: String { rawValue }
     }
 
@@ -18,15 +18,17 @@ struct IntegratedTerminalView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label(mode == .shell ? "Terminal" : "Agent terminal", systemImage: "terminal")
+                Label(title, systemImage: "terminal")
                     .font(.headline)
                 Spacer()
                 Button("Close") { dismiss() }
             }
             .padding(12)
             Divider()
-            if mode == .agent {
-                Text("Starts a separate interactive CLI for this conversation; it does not attach to an already-running terminal.")
+            if mode == .agent || mode == .sideChat {
+                Text(mode == .sideChat
+                     ? "Type \(sideChatCommand) in the resumed interactive CLI to start a provider-native side conversation. This does not send to the main Skynet turn."
+                     : "Starts a separate interactive CLI for this conversation; it does not attach to an already-running terminal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -45,14 +47,14 @@ struct IntegratedTerminalView: View {
                 sshHost: session.backendID?.rawValue.hasPrefix("ssh:") == true
                     ? String(session.backendID!.rawValue.dropFirst("ssh:".count)) : nil,
                 launchCommand: agentCommand,
-                extraEnvironment: mode == .agent ? provider?.environment ?? [:] : [:]
+                extraEnvironment: mode == .shell ? [:] : provider?.environment ?? [:]
             )
         }
         .onDisappear { terminal.stop() }
     }
 
     private var agentCommand: String? {
-        guard mode == .agent, let token = session.providerResumeToken,
+        guard mode != .shell, let token = session.providerResumeToken,
               let provider else { return nil }
         let configuredExecutable = provider.executable ?? provider.kind.defaultExecutableName
         let isRemote = session.backendID?.rawValue.hasPrefix("ssh:") == true
@@ -64,6 +66,22 @@ struct IntegratedTerminalView: View {
             ? ["resume", token] : ["--resume", token]
         return ([executable] + provider.defaultArguments + arguments)
             .map(SSHBackend.shellQuote).joined(separator: " ")
+    }
+
+    private var title: String {
+        switch mode {
+        case .shell: "Terminal"
+        case .agent: "Agent terminal"
+        case .sideChat: "Side chat · \(sideChatCommand)"
+        }
+    }
+
+    private var sideChatCommand: String {
+        guard let kind = provider?.kind else { return "side chat command" }
+        return switch kind {
+        case .codex: "/side"
+        case .claudeCode, .claudeCodeCompatible: "/btw"
+        }
     }
 }
 
