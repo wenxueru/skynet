@@ -26,8 +26,11 @@ struct SessionDetailView: View {
     @State private var isCodexModelListPresented = false
     @State private var isOutlinePresented = false
     @State private var isEnvironmentPresented = false
+    @State private var isSidePanelMenuPresented = false
     @State private var terminalMode: IntegratedTerminalView.Mode?
     @State private var isFilesPresented = false
+    @State private var isBrowserPresented = false
+    @State private var fileBrowserTab: SessionFilesView.Tab = .changes
     @State private var isCustomSchedulePresented = false
     @State private var customScheduleDate = Date().addingTimeInterval(30 * 60)
     @State private var pendingSchedule: PendingSchedule?
@@ -167,11 +170,14 @@ struct SessionDetailView: View {
         .sheet(isPresented: $isFilesPresented) {
             if let session = model.selectedSession,
                let root = model.selectedProject?.rootPath ?? session.workingDirectory {
-                SessionFilesView(session: session, rootPath: root) { path in
+                SessionFilesView(session: session, rootPath: root, initialTab: fileBrowserTab) { path in
                     let reference = "`\(path)`"
                     draft += draft.isEmpty ? reference : " \(reference)"
                 }
             }
+        }
+        .sheet(isPresented: $isBrowserPresented) {
+            SessionBrowserView()
         }
         .popover(isPresented: $isCustomSchedulePresented) {
             VStack(alignment: .leading, spacing: 12) {
@@ -228,23 +234,20 @@ struct SessionDetailView: View {
             if model.isRunning {
                 ProgressView().controlSize(.small)
             }
-            Button { isFilesPresented = true } label: {
-                Image(systemName: "folder")
+            Button {
+                isSidePanelMenuPresented.toggle()
+            } label: {
+                Image(systemName: "rectangle.split.2x1")
+                    .frame(width: 30, height: 30)
+                    .background(isSidePanelMenuPresented ? Color.accentColor.opacity(0.16) : .clear,
+                                in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Browse project files")
-            .disabled((model.selectedProject?.rootPath ?? model.selectedSession?.workingDirectory) == nil)
-            Menu {
-                Button("Shell terminal") { terminalMode = .shell }
-                Button("Agent terminal") { terminalMode = .agent }
-                    .disabled(model.isRunning || model.selectedSession?.providerResumeToken == nil)
-            } label: {
-                Image(systemName: "terminal")
+            .foregroundStyle(isSidePanelMenuPresented ? Color.accentColor : .secondary)
+            .help("Toggle side panel")
+            .popover(isPresented: $isSidePanelMenuPresented, arrowEdge: .bottom) {
+                sidePanelMenu
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Terminal")
             Button {
                 isEnvironmentPresented.toggle()
             } label: {
@@ -804,6 +807,86 @@ struct SessionDetailView: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private var sidePanelMenu: some View {
+        VStack(spacing: 4) {
+            sidePanelAction("Review", icon: "rectangle.on.rectangle", shortcut: "⌃⇧G",
+                            disabled: !canBrowseFiles) {
+                openFiles(tab: .changes)
+            }
+            .keyboardShortcut("g", modifiers: [.control, .shift])
+            sidePanelAction("Terminal", icon: "terminal", shortcut: "⌃`") {
+                terminalMode = .shell
+            }
+            .keyboardShortcut(KeyEquivalent("`"), modifiers: [.control])
+            sidePanelAction("Browser", icon: "globe", shortcut: "⌘T") {
+                isBrowserPresented = true
+            }
+            .keyboardShortcut("t", modifiers: .command)
+            sidePanelAction("Files", icon: "folder", shortcut: "⌘P",
+                            disabled: !canBrowseFiles) {
+                openFiles(tab: .directories)
+            }
+            .keyboardShortcut("p", modifiers: .command)
+            Divider().padding(.vertical, 4)
+            sidePanelAction("Side chat", icon: "bubble.left.and.bubble.right", shortcut: "⌥⌘S",
+                            disabled: !canOpenNativeSideChat) {
+                terminalMode = .sideChat
+            }
+            .keyboardShortcut("s", modifiers: [.command, .option])
+            .help("Open the resumed interactive CLI, then enter its native /side or /btw command")
+        }
+        .padding(8)
+        .frame(width: 260)
+    }
+
+    private var canBrowseFiles: Bool {
+        (model.selectedProject?.rootPath ?? model.selectedSession?.workingDirectory) != nil
+    }
+
+    private var canOpenNativeSideChat: Bool {
+        guard let provider = model.selectedProvider,
+              model.selectedSession?.providerResumeToken != nil else { return false }
+        return provider.kind == .codex || provider.kind == .claudeCode
+            || provider.kind == .claudeCodeCompatible
+    }
+
+    private func openFiles(tab: SessionFilesView.Tab) {
+        fileBrowserTab = tab
+        isFilesPresented = true
+    }
+
+    private func sidePanelAction(
+        _ title: String,
+        icon: String,
+        shortcut: String,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            isSidePanelMenuPresented = false
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .frame(width: 18)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                Spacer()
+                Text(shortcut)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
     }
 
     private var modelMenu: some View {

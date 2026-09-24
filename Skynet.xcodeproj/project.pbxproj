@@ -28,6 +28,7 @@
 		38FA8F77FCEBA8E8F72170EC /* Attachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0DD066593A4853F98CDA8A4 /* Attachment.swift */; };
 		3924856B61C139ACA5848941 /* addon-fit.js in Resources */ = {isa = PBXBuildFile; fileRef = 2ED0D5060B19968CB1802CA5 /* addon-fit.js */; };
 		3A8DACCE3A1338494FB3733E /* SessionFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D9F6C9429A3A10ED220570 /* SessionFilesView.swift */; };
+		27B8525DA24041CF9D0702A2 /* SessionBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374A81365B94A1BB9DC103E /* SessionBrowserView.swift */; };
 		3FD88A56309BFEDDF654355C /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18671EDFB791DB653FB2AAAA /* AppModel.swift */; };
 		40ABDEDB51D1ED386553A05A /* ScriptedPairingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFE7D8F04D9949531DE37E65 /* ScriptedPairingService.swift */; };
 		4249900D1E0896F7124AF9F5 /* Identifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51D949EB6212802BB74375F9 /* Identifiers.swift */; };
@@ -133,6 +134,7 @@
 		19694BB65989964DCA9F098A /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		1D3341D3C558182B8EBB7B50 /* ComposerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerViewModel.swift; sourceTree = "<group>"; };
 		20D9F6C9429A3A10ED220570 /* SessionFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionFilesView.swift; sourceTree = "<group>"; };
+		4374A81365B94A1BB9DC103E /* SessionBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionBrowserView.swift; sourceTree = "<group>"; };
 		2235B57099BA6C66E64A4E21 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		23C0248FBA2F3FEFCDA50AA7 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
 		25269F9DC91A8798B8D18385 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
@@ -460,6 +462,7 @@
 				8A6AC8BB5E723B1862C31A8D /* ProviderSettingsView.swift */,
 				B74CFD9CB358756A3C5D8329 /* SessionDetailView.swift */,
 				20D9F6C9429A3A10ED220570 /* SessionFilesView.swift */,
+				4374A81365B94A1BB9DC103E /* SessionBrowserView.swift */,
 				7F54A3068B5DBC3A948AA9E4 /* SkynetMacApp.swift */,
 				149F4F8648609EC54125F3F4 /* TranscriptPresentation.swift */,
 				E63DFDC33AD165F357A217BB /* TerminalAssets */,
@@ -753,6 +756,7 @@
 				D3E82D43DEF3F8A4F3C4AC32 /* ProviderSettingsView.swift in Sources */,
 				77F99C05F4F97654A54B2064 /* SessionDetailView.swift in Sources */,
 				3A8DACCE3A1338494FB3733E /* SessionFilesView.swift in Sources */,
+				27B8525DA24041CF9D0702A2 /* SessionBrowserView.swift in Sources */,
 				764969FD368B049C2AFEAF2B /* SkynetMacApp.swift in Sources */,
 				773FF116C6BC549C9AE3B553 /* TranscriptPresentation.swift in Sources */,
 			);
