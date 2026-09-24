@@ -285,6 +285,18 @@ enum RemoteSessionDiscovery {
 import glob,json,os,sys
 provider,sid,cursor=sys.argv[1:4]
 home=os.path.expanduser('~')
+
+def previous_line_start(source, offset):
+    upper=offset
+    while upper>0:
+        lower=max(0,upper-65536)
+        source.seek(lower)
+        chunk=source.read(upper-lower)
+        newline=chunk.rfind(b'\n')
+        if newline>=0: return lower+newline+1
+        upper=lower
+    return 0
+
 if provider=='codex':
     paths=[p for p in glob.glob(os.path.join(home,'.codex','sessions','**','*.jsonl'),recursive=True)
            if sid in os.path.basename(p)]
@@ -295,15 +307,19 @@ else:
 if not paths:
     sys.exit(2)
 path=max(paths,key=os.path.getmtime)
-size=os.path.getsize(path); page_size=4*1024*1024
+size=os.path.getsize(path); page_size=\#(JSONDiskStore.messagePageSize)
 end=size if cursor=='latest' else min(size,int(cursor))
 start=max(0,end-page_size)
+requested_start=start
 with open(path,'rb') as source:
     if start:
         source.seek(start-1)
-        if source.read(1)!=b'\n': source.readline()
+        if source.read(1)!=b'\n':
+            source.readline()
+            start=source.tell()
+            if start>=end:
+                start=previous_line_start(source,requested_start)
         else: source.seek(start)
-        start=source.tell()
     source.seek(0)
     meta=None
     while True:
@@ -536,7 +552,7 @@ enum SessionTranscriptDiscovery {
 }
 
 private enum LocalSessionTranscriptDiscovery {
-    private static let pageSize = 4 * 1024 * 1024
+    private static let pageSize = JSONDiskStore.messagePageSize
     private static let maxMetadataLineSize = 1024 * 1024
 
     static func transcriptPage(
@@ -598,10 +614,14 @@ private enum LocalSessionTranscriptDiscovery {
         let fileSize = try handle.seekToEnd()
         let end = min(UInt64(max(0, cursor ?? Int64(fileSize))), fileSize)
         var start = end > UInt64(pageSize) ? end - UInt64(pageSize) : 0
+        let requestedStart = start
         if start > 0 {
             handle.seek(toFileOffset: start - 1)
             if try handle.read(upToCount: 1) != Data([0x0A]) {
                 start = try nextLineStart(in: handle, from: start, before: end)
+                if start >= end {
+                    start = try previousLineStart(in: handle, before: requestedStart)
+                }
             }
         }
 
@@ -631,6 +651,20 @@ private enum LocalSessionTranscriptDiscovery {
             position += UInt64(chunk.count)
         }
         return end
+    }
+
+    private static func previousLineStart(in handle: FileHandle, before offset: UInt64) throws -> UInt64 {
+        var upperBound = offset
+        while upperBound > 0 {
+            let lowerBound = upperBound > 64 * 1024 ? upperBound - 64 * 1024 : 0
+            handle.seek(toFileOffset: lowerBound)
+            let chunk = try handle.read(upToCount: Int(upperBound - lowerBound)) ?? Data()
+            if let newline = chunk.lastIndex(of: 0x0A) {
+                return lowerBound + UInt64(chunk.distance(from: chunk.startIndex, to: newline)) + 1
+            }
+            upperBound = lowerBound
+        }
+        return 0
     }
 
     private static func readFirstLine(from handle: FileHandle) throws -> Data {

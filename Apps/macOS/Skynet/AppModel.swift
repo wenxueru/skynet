@@ -31,7 +31,13 @@ final class AppModel {
 
     private struct TranscriptLoadResult: Sendable {
         let messages: [Message]
+        let olderCursor: Int64?
         let errorMessage: String?
+    }
+
+    private enum TranscriptCursor {
+        case provider(Int64)
+        case cache(Int64)
     }
 
     private struct TranscriptMessageKey: Hashable {
@@ -54,13 +60,19 @@ final class AppModel {
     var liveTools: [LiveTool] = []
     var searchText = ""
     var isRunning = false
+    var isSelectedSessionRunning: Bool {
+        isRunning && selectedSessionID == activeTurnSessionID
+    }
+    var hasSelectedSessionActivity: Bool {
+        selectedSessionID != nil && selectedSessionID == liveSessionID
+    }
     var workingSince: Date?
     var errorMessage: String?
     var pendingAttachments: [ImageAttachment] = []
     var queuedPrompts: [QueuedPrompt] = []
     private(set) var steeringQueuedPromptID: UUID?
     var canSteerQueuedPrompt: Bool {
-        isRunning && selectedSessionID == activeTurnSessionID && steeringQueuedPromptID == nil
+        isSelectedSessionRunning && steeringQueuedPromptID == nil
     }
     var scheduledDispatchingSessionID: SessionID? { scheduledDispatchSessionID }
     var pendingPermissionRequest: PermissionRequest?
@@ -71,21 +83,27 @@ final class AppModel {
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
     var isLoadingTranscript = false
-    var isLoadingOlderTranscript = false
+    var isLoadingOlderTranscript: Bool {
+        selectedSessionID != nil && loadingOlderTranscriptSessionID == selectedSessionID
+    }
     private(set) var storageDirectoryURL: URL?
 
     private let store: JSONDiskStore?
     private var activeSession: AgentSession?
     private var activeTurnSessionID: SessionID?
+    private var liveSessionID: SessionID?
     private var streamTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var transcriptTask: Task<Void, Never>?
+    private var loadingOlderTranscriptSessionID: SessionID?
     private var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
     private var scheduleTimer: Task<Void, Never>?
     private var scheduledDispatch: Task<Void, Never>?
     private var scheduledDispatchSessionID: SessionID?
     private var scheduledQueueSessionIDs: Set<SessionID> = []
-    private var transcriptCursors: [SessionID: Int64] = [:]
+    private var transcriptCursors: [SessionID: TranscriptCursor] = [:]
+    private var transcriptCacheCursors: [SessionID: Int64] = [:]
+    private var transcriptLoadToken = UUID()
 
     private static let disabledMachinesKey = "disabledMachineIDs"
     private static let deletedDiscoveryKeysKey = "deletedDiscoveryKeys"
@@ -217,6 +235,7 @@ final class AppModel {
         do {
             projects = try store.loadProjects().sorted { $0.updatedAt > $1.updatedAt }
             sessions = try store.loadSessions(matching: nil)
+            recoverInterruptedLocalSessions(in: &sessions, store: store)
             scheduledQueueSessionIDs = Set(sessions.compactMap { session in
                 queueEntries(for: session.id).contains(where: {
                     $0.scheduledAt != nil && $0.dispatchStartedAt == nil
@@ -230,11 +249,29 @@ final class AppModel {
                 selectedSessionID = sessions(for: project).first?.id
             }
             if let selectedSessionID {
-                messages = try store.loadMessages(for: selectedSessionID)
                 loadQueue(for: selectedSessionID)
+                loadTranscript(for: selectedSessionID, includeProviderHistory: false)
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func recoverInterruptedLocalSessions(
+        in sessions: inout [SessionRecord],
+        store: JSONDiskStore
+    ) {
+        for index in sessions.indices where
+            sessions[index].status == .running
+                && sessions[index].backendID == DiscoveredMachine.local.id {
+            // Local agent processes are children of Skynet; they cannot still
+            // be running after a fresh app launch.
+            sessions[index].status = .idle
+            do {
+                try store.saveSession(sessions[index])
+            } catch {
+                errorMessage = "Could not clear an interrupted session state: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -266,22 +303,22 @@ final class AppModel {
         if let first = filteredSessions(for: project).first {
             select(session: first)
         } else {
-            selectedSessionID = nil
-            messages = []
-            queuedPrompts = []
+            clearSessionSelection()
         }
     }
 
     func select(session: SessionRecord) {
+        let isChangingSession = selectedSessionID != session.id
         selectedProjectID = session.projectID
         selectedSessionID = session.id
+        if isChangingSession { messages = [] }
         loadQueue(for: session.id)
         if session.markedUnreadAt != nil {
             var updated = session
             updated.markedUnreadAt = nil
             save(updated)
         }
-        resetLiveState()
+        if !isRunning { resetLiveState() }
         loadTranscript(for: session.id)
     }
 
@@ -374,6 +411,7 @@ final class AppModel {
     }
 
     func clearSessionSelection() {
+        transcriptLoadToken = UUID()
         selectedSessionID = nil
         transcriptTask?.cancel()
         transcriptTask = nil
@@ -1119,7 +1157,7 @@ final class AppModel {
         let attachments = pendingAttachments
         let referenceSessions = sessions
         pendingAttachments = []
-        resetLiveState()
+        resetLiveState(for: record.id)
         isRunning = true
         activeTurnSessionID = record.id
         workingSince = Date()
@@ -1185,11 +1223,10 @@ final class AppModel {
                 didStartTurn = true
                 if let queuedEntry { removeQueuedPrompt(queuedEntry.id, for: record.id) }
                 for try await event in stream {
-                    apply(event)
+                    apply(event, sessionID: record.id)
                 }
                 let updated = await session.record
                 replace(updated)
-                messages = try store.loadMessages(for: updated.id)
                 completedTurn = true
             } catch {
                 if !(error is CancellationError), steeringQueuedPromptID == nil {
@@ -1250,11 +1287,12 @@ final class AppModel {
         }
     }
 
-    private func apply(_ event: AgentEvent) {
+    private func apply(_ event: AgentEvent, sessionID: SessionID) {
         switch event {
         case .textDelta(let text): liveText += text
         case .thinkingDelta(let text): liveThinking += text
         case .messageCompleted(let message):
+            guard selectedSessionID == sessionID else { return }
             if !messages.contains(where: { $0.id == message.id }) { messages.append(message) }
         case .toolCallStarted(let call):
             liveTools.append(LiveTool(id: call.id, name: call.name, input: call.input))
@@ -1442,10 +1480,11 @@ final class AppModel {
         return SSHBackend(id: backendID, displayName: alias, host: alias)
     }
 
-    private func resetLiveState() {
+    private func resetLiveState(for sessionID: SessionID? = nil) {
         liveText = ""
         liveThinking = ""
         liveTools = []
+        liveSessionID = sessionID
     }
 
     private func requestPermission(
@@ -1467,105 +1506,151 @@ final class AppModel {
         }
     }
 
-    private func loadTranscript(for sessionID: SessionID) {
+    private func loadTranscript(
+        for sessionID: SessionID,
+        includeProviderHistory: Bool = true
+    ) {
+        let loadToken = UUID()
+        transcriptLoadToken = loadToken
         transcriptTask?.cancel()
         transcriptCursors[sessionID] = nil
+        transcriptCacheCursors[sessionID] = nil
         let store: JSONDiskStore
         do {
             store = try requireStore()
         } catch {
-            messages = []
             errorMessage = error.localizedDescription
             isLoadingTranscript = false
             return
         }
-        isLoadingTranscript = true
-        messages = []
-        let transcriptRecord = sessions.first {
-            $0.id == sessionID
-                && $0.providerResumeToken != nil
-                && ($0.backendID == DiscoveredMachine.local.id
-                    || $0.backendID?.rawValue.hasPrefix("ssh:") == true)
+        isLoadingTranscript = messages.isEmpty
+        let transcriptRecord: SessionRecord?
+        if includeProviderHistory {
+            transcriptRecord = sessions.first {
+                $0.id == sessionID
+                    && $0.providerResumeToken != nil
+                    && ($0.backendID == DiscoveredMachine.local.id
+                        || $0.backendID?.rawValue.hasPrefix("ssh:") == true)
+            }
+        } else {
+            transcriptRecord = nil
         }
         transcriptTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
                 do {
+                    let page = try store.loadMessagesPage(for: sessionID)
                     return TranscriptLoadResult(
-                        messages: try store.loadMessages(for: sessionID),
+                        messages: page.messages,
+                        olderCursor: page.olderCursor,
                         errorMessage: nil
                     )
                 } catch {
                     return TranscriptLoadResult(
                         messages: [],
+                        olderCursor: nil,
                         errorMessage: error.localizedDescription
                     )
                 }
             }.value
-            guard let self, !Task.isCancelled, selectedSessionID == sessionID else { return }
-            messages = result.messages
+            guard let self,
+                  !Task.isCancelled,
+                  isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
+            messages = Self.mergeTranscriptMessages(result.messages, messages)
             errorMessage = result.errorMessage
+            transcriptCacheCursors[sessionID] = result.olderCursor
+            transcriptCursors[sessionID] = result.olderCursor.map(TranscriptCursor.cache)
+            isLoadingTranscript = false
             if let transcriptRecord {
                 do {
                     if let page = try await SessionTranscriptDiscovery.transcriptPage(for: transcriptRecord) {
+                        guard !Task.isCancelled,
+                              isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
                         let imported = page.session
                         let mergedMessages = Self.mergeTranscriptMessages(
-                            imported.messages, result.messages
+                            imported.messages, messages
                         )
-                        let storedMessages = try await Task.detached(priority: .userInitiated) {
-                            let normalized = try Self.persistableMessages(mergedMessages, store: store)
-                            try store.replaceMessages(normalized, for: sessionID)
-                            return normalized
-                        }.value
-                        guard !Task.isCancelled, selectedSessionID == sessionID else { return }
-                        messages = storedMessages
-                        transcriptCursors[sessionID] = page.olderCursor
+                        let visibleMessages = try await Self.persistableMessagesInBackground(
+                            mergedMessages, store: store
+                        )
+                        guard !Task.isCancelled,
+                              isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
+                        messages = Self.mergeTranscriptMessages(visibleMessages, messages)
+                        transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.provider)
+                            ?? transcriptCacheCursors[sessionID].map(TranscriptCursor.cache)
                         var updated = transcriptRecord
-                        updated.messageCount = storedMessages.count
                         updated.updatedAt = max(updated.updatedAt, imported.updatedAt)
                         save(updated)
                     }
                 } catch {
-                    guard !Task.isCancelled, selectedSessionID == sessionID else { return }
+                    guard !Task.isCancelled,
+                          isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
                     errorMessage = "Session history could not be fully loaded: \(error.localizedDescription)"
                 }
             }
-            guard !Task.isCancelled, selectedSessionID == sessionID else { return }
-            isLoadingTranscript = false
+            guard !Task.isCancelled,
+                  isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
             transcriptTask = nil
         }
     }
 
+    private func isCurrentTranscriptLoad(_ token: UUID, for sessionID: SessionID) -> Bool {
+        selectedSessionID == sessionID && transcriptLoadToken == token
+    }
+
     func loadOlderTranscript() async {
-        guard !isLoadingOlderTranscript,
-              let sessionID = selectedSessionID,
+        guard let sessionID = selectedSessionID,
+              loadingOlderTranscriptSessionID != sessionID,
               let cursor = transcriptCursors[sessionID],
-              let record = sessions.first(where: { $0.id == sessionID }),
               let store else { return }
-        isLoadingOlderTranscript = true
-        defer { isLoadingOlderTranscript = false }
+        let loadToken = transcriptLoadToken
+        loadingOlderTranscriptSessionID = sessionID
+        defer {
+            if loadingOlderTranscriptSessionID == sessionID {
+                loadingOlderTranscriptSessionID = nil
+            }
+        }
 
         do {
-            guard let page = try await SessionTranscriptDiscovery.transcriptPage(
-                for: record, before: cursor
-            ) else {
-                transcriptCursors[sessionID] = nil
-                return
+            switch cursor {
+            case .provider(let sourceCursor):
+                guard let record = sessions.first(where: { $0.id == sessionID }) else {
+                    transcriptCursors[sessionID] = transcriptCacheCursors[sessionID]
+                        .map(TranscriptCursor.cache)
+                    return
+                }
+                let page = try await SessionTranscriptDiscovery.transcriptPage(
+                    for: record, before: sourceCursor
+                )
+                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
+                guard let page else {
+                    transcriptCursors[sessionID] = transcriptCacheCursors[sessionID]
+                        .map(TranscriptCursor.cache)
+                    return
+                }
+                let mergedMessages = Self.mergeTranscriptMessages(page.session.messages, messages)
+                let visibleMessages = try await Self.persistableMessagesInBackground(
+                    mergedMessages, store: store
+                )
+                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
+                messages = Self.mergeTranscriptMessages(visibleMessages, messages)
+                transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.provider)
+                    ?? transcriptCacheCursors[sessionID].map(TranscriptCursor.cache)
+
+            case .cache(let cacheCursor):
+                let page = try await Task.detached(priority: .userInitiated) {
+                    try store.loadMessagesPage(for: sessionID, before: cacheCursor)
+                }.value
+                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
+                messages = Self.mergeTranscriptMessages(page.messages, messages)
+                transcriptCacheCursors[sessionID] = page.olderCursor
+                if let currentCursor = transcriptCursors[sessionID],
+                   case .provider = currentCursor {
+                    return
+                }
+                transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.cache)
             }
-            guard selectedSessionID == sessionID else { return }
-            let mergedMessages = Self.mergeTranscriptMessages(page.session.messages, messages)
-            let storedMessages = try await Task.detached(priority: .userInitiated) {
-                let normalized = try Self.persistableMessages(mergedMessages, store: store)
-                try store.replaceMessages(normalized, for: sessionID)
-                return normalized
-            }.value
-            guard selectedSessionID == sessionID else { return }
-            messages = storedMessages
-            transcriptCursors[sessionID] = page.olderCursor
-            var updated = record
-            updated.messageCount = storedMessages.count
-            save(updated)
         } catch {
-            if selectedSessionID == sessionID {
+            if isCurrentTranscriptLoad(loadToken, for: sessionID) {
                 errorMessage = "Could not load older session messages: \(error.localizedDescription)"
             }
         }
@@ -1603,6 +1688,15 @@ final class AppModel {
             }
             return stored
         }
+    }
+
+    nonisolated private static func persistableMessagesInBackground(
+        _ messages: [Message],
+        store: JSONDiskStore
+    ) async throws -> [Message] {
+        try await Task.detached(priority: .userInitiated) {
+            try persistableMessages(messages, store: store)
+        }.value
     }
 
     func loadUsageSummary(range: SessionUsageRange) async throws -> SessionUsageSummary {

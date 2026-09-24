@@ -77,6 +77,8 @@ public protocol PersistenceStore: Sendable {
 /// blobs/<xx>/<sha256>            content-addressed attachments
 /// ```
 public struct JSONDiskStore: PersistenceStore {
+    public static let messagePageSize = 256 * 1024
+
     /// The `skynet` subdirectory the apps should use inside an app-group
     /// container.
     public static func defaultRoot(in container: URL) -> URL {
@@ -207,6 +209,81 @@ public struct JSONDiskStore: PersistenceStore {
             messages.append(message)
         }
         return messages
+    }
+
+    /// Loads the newest bounded slice of a transcript. `olderCursor` is a byte
+    /// offset that can be passed back to load the preceding slice.
+    public func loadMessagesPage(
+        for session: SessionID,
+        before cursor: Int64? = nil,
+        byteLimit: Int = JSONDiskStore.messagePageSize
+    ) throws -> (messages: [Message], olderCursor: Int64?) {
+        let url = transcriptURL(session)
+        guard FileManager.default.fileExists(atPath: url.path) else { return ([], nil) }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        let fileSize = try handle.seekToEnd()
+        let end = min(UInt64(max(0, cursor ?? Int64(fileSize))), fileSize)
+        guard end > 0 else { return ([], nil) }
+
+        let limit = UInt64(max(1, byteLimit))
+        let requestedStart = end > limit ? end - limit : 0
+        var start = requestedStart
+        if start > 0 {
+            try handle.seek(toOffset: start - 1)
+            if try handle.read(upToCount: 1) != Data([0x0A]) {
+                start = try nextLineStart(in: handle, from: start, before: end)
+                if start >= end {
+                    start = try previousLineStart(in: handle, before: requestedStart)
+                }
+            }
+        }
+
+        try handle.seek(toOffset: start)
+        let data = try handle.read(upToCount: Int(end - start)) ?? Data()
+        let messages = data.split(separator: 0x0A).compactMap { line in
+            try? StoreEnvelope.decode(
+                Message.self,
+                from: Data(line),
+                migrations: migrations
+            )
+        }
+        let olderCursor = start > 0 && start < end ? Int64(start) : nil
+        return (messages, olderCursor)
+    }
+
+    private func nextLineStart(
+        in handle: FileHandle,
+        from offset: UInt64,
+        before end: UInt64
+    ) throws -> UInt64 {
+        var position = offset
+        while position < end {
+            try handle.seek(toOffset: position)
+            let chunk = try handle.read(upToCount: Int(min(64 * 1024, end - position))) ?? Data()
+            guard !chunk.isEmpty else { break }
+            if let newline = chunk.firstIndex(of: 0x0A) {
+                return position + UInt64(chunk.distance(from: chunk.startIndex, to: newline)) + 1
+            }
+            position += UInt64(chunk.count)
+        }
+        return end
+    }
+
+    private func previousLineStart(in handle: FileHandle, before offset: UInt64) throws -> UInt64 {
+        var upperBound = offset
+        while upperBound > 0 {
+            let lowerBound = upperBound > 64 * 1024 ? upperBound - 64 * 1024 : 0
+            try handle.seek(toOffset: lowerBound)
+            let chunk = try handle.read(upToCount: Int(upperBound - lowerBound)) ?? Data()
+            if let newline = chunk.lastIndex(of: 0x0A) {
+                return lowerBound + UInt64(chunk.distance(from: chunk.startIndex, to: newline)) + 1
+            }
+            upperBound = lowerBound
+        }
+        return 0
     }
 
     public func replaceMessages(_ messages: [Message], for session: SessionID) throws {

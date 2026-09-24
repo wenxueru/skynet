@@ -14,6 +14,9 @@ struct SessionDetailView: View {
     @State private var isAtBottom = true
     @State private var shouldScrollToLatestAfterLoad = false
     @State private var transcriptViewportHeight: CGFloat = 0
+    @State private var hasInitializedTranscriptPosition = false
+    @State private var wasNearTranscriptTop = false
+    @State private var isRequestingOlderTranscript = false
     @State private var composerSelection = NSRange(location: 0, length: 0)
     @State private var composerItems: [ComposerSuggestion] = []
     @State private var selectedSuggestionIndex = 0
@@ -231,7 +234,7 @@ struct SessionDetailView: View {
                 .onTapGesture(count: 2) {
                     NSApp.keyWindow?.performZoom(nil)
                 }
-            if model.isRunning {
+            if model.isSelectedSessionRunning {
                 ProgressView().controlSize(.small)
             }
             Button {
@@ -338,7 +341,7 @@ struct SessionDetailView: View {
                     "Background processes",
                     icon: "terminal",
                     tools: backgroundTools,
-                    emptyMessage: model.isRunning
+                    emptyMessage: model.isSelectedSessionRunning
                         ? "No background process reported yet"
                         : "No background processes"
                 )
@@ -417,11 +420,13 @@ struct SessionDetailView: View {
     }
 
     private var subagentTools: [AppModel.LiveTool] {
-        model.liveTools.filter(isSubagentTool)
+        guard model.hasSelectedSessionActivity else { return [] }
+        return model.liveTools.filter(isSubagentTool)
     }
 
     private var backgroundTools: [AppModel.LiveTool] {
-        model.liveTools.filter { tool in
+        guard model.hasSelectedSessionActivity else { return [] }
+        return model.liveTools.filter { tool in
             guard !isSubagentTool(tool) else { return false }
             let isExplicitlyBackground = [
                 "run_in_background", "runInBackground", "background", "is_background",
@@ -477,9 +482,19 @@ struct SessionDetailView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 18) {
+                    Color.clear
+                        .frame(height: 1)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: TopPositionKey.self,
+                                    value: geometry.frame(in: .named("transcriptScroll")).minY
+                                )
+                            }
+                        }
                     if model.canLoadOlderTranscript {
                         Button {
-                            Task { await model.loadOlderTranscript() }
+                            requestOlderTranscript(using: proxy)
                         } label: {
                             HStack(spacing: 8) {
                                 if model.isLoadingOlderTranscript {
@@ -495,7 +510,11 @@ struct SessionDetailView: View {
                             .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
-                        .disabled(model.isLoadingOlderTranscript || model.isLoadingTranscript)
+                        .disabled(
+                            isRequestingOlderTranscript
+                                || model.isLoadingOlderTranscript
+                                || model.isLoadingTranscript
+                        )
                     }
                     ForEach(model.transcriptGroups) { group in
                         Group {
@@ -514,7 +533,7 @@ struct SessionDetailView: View {
                         }
                         .id(group.id)
                     }
-                    if model.isRunning {
+                    if model.isSelectedSessionRunning {
                         LiveTranscriptResponseView(model: model)
                             .id("live")
                     }
@@ -535,27 +554,32 @@ struct SessionDetailView: View {
             }
             .coordinateSpace(name: "transcriptScroll")
             .onAppear {
-                guard model.selectedSessionID != nil else { return }
-                isAtBottom = true
-                proxy.scrollTo("bottom", anchor: .bottom)
+                scrollToLatestOrAfterLoad(using: proxy)
             }
             .onChange(of: model.selectedSessionID) { _, sessionID in
+                hasInitializedTranscriptPosition = false
+                wasNearTranscriptTop = false
+                isRequestingOlderTranscript = false
                 guard sessionID != nil else {
                     shouldScrollToLatestAfterLoad = false
                     return
                 }
-                if model.isLoadingTranscript {
-                    shouldScrollToLatestAfterLoad = true
-                } else {
-                    isAtBottom = true
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+                scrollToLatestOrAfterLoad(using: proxy)
             }
             .onChange(of: model.isLoadingTranscript) { wasLoading, isLoading in
                 guard wasLoading, !isLoading, shouldScrollToLatestAfterLoad else { return }
                 shouldScrollToLatestAfterLoad = false
-                isAtBottom = true
-                proxy.scrollTo("bottom", anchor: .bottom)
+                scrollToLatestOrAfterLoad(using: proxy)
+            }
+            .onPreferenceChange(TopPositionKey.self) { topPosition in
+                let isNearTop = topPosition >= -64
+                let enteredPrefetchRange = isNearTop && !wasNearTranscriptTop
+                wasNearTranscriptTop = isNearTop
+                guard enteredPrefetchRange,
+                      hasInitializedTranscriptPosition,
+                      !isAtBottom,
+                      !model.isLoadingTranscript else { return }
+                requestOlderTranscript(using: proxy)
             }
             .onPreferenceChange(BottomPositionKey.self) { bottomPosition in
                 isAtBottom = bottomPosition <= transcriptViewportHeight + 24
@@ -591,7 +615,7 @@ struct SessionDetailView: View {
             .overlay {
                 if model.isLoadingTranscript {
                     ProgressView().controlSize(.small)
-                } else if model.messages.isEmpty, !model.isRunning {
+                } else if model.messages.isEmpty, !model.isSelectedSessionRunning {
                     ContentUnavailableView(
                         "No transcript",
                         systemImage: "text.bubble",
@@ -650,7 +674,7 @@ struct SessionDetailView: View {
                                         }
                                     }
                                     Spacer(minLength: 4)
-                                    if model.isRunning && entry.scheduledAt == nil {
+                                    if model.isSelectedSessionRunning && entry.scheduledAt == nil {
                                         Button("Steer") { model.steerQueuedPrompt(entry.id) }
                                             .font(.callout)
                                             .disabled(!model.canSteerQueuedPrompt || entry.dispatchStartedAt != nil)
@@ -774,7 +798,7 @@ struct SessionDetailView: View {
                         modelMenu
                         effortMenu
                     }
-                    if model.isRunning {
+                    if model.isSelectedSessionRunning {
                         Button(action: model.cancel) {
                             Image(systemName: "stop.fill")
                                 .foregroundStyle(.secondary)
@@ -1418,6 +1442,54 @@ struct SessionDetailView: View {
     private func scrollToLatestIfNeeded(using proxy: ScrollViewProxy) {
         guard isAtBottom else { return }
         proxy.scrollTo("bottom", anchor: .bottom)
+    }
+
+    private func scrollToLatestOrAfterLoad(using proxy: ScrollViewProxy) {
+        guard model.selectedSessionID != nil else { return }
+        guard !model.isLoadingTranscript else {
+            shouldScrollToLatestAfterLoad = true
+            return
+        }
+
+        isAtBottom = true
+        proxy.scrollTo("bottom", anchor: .bottom)
+        hasInitializedTranscriptPosition = true
+    }
+
+    private func requestOlderTranscript(using proxy: ScrollViewProxy) {
+        guard !isRequestingOlderTranscript,
+              !model.isLoadingOlderTranscript,
+              !model.isLoadingTranscript,
+              model.canLoadOlderTranscript,
+              let sessionID = model.selectedSessionID else { return }
+
+        isRequestingOlderTranscript = true
+        let existingGroupIDs = Set(model.transcriptGroups.map(\.id))
+        Task {
+            await model.loadOlderTranscript()
+            guard model.selectedSessionID == sessionID else {
+                isRequestingOlderTranscript = false
+                return
+            }
+
+            if let firstLoadedGroup = model.transcriptGroups.first(where: {
+                !existingGroupIDs.contains($0.id)
+            }) {
+                await Task.yield()
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(firstLoadedGroup.id, anchor: .top)
+                }
+            }
+            isRequestingOlderTranscript = false
+        }
+    }
+}
+
+private struct TopPositionKey: PreferenceKey {
+    static let defaultValue = -CGFloat.infinity
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
