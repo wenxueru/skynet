@@ -106,9 +106,10 @@ private final class TerminalController: NSObject, ObservableObject, WKScriptMess
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         webView = view
-        if let url = Bundle.main.url(
+        let bundledPage = Bundle.main.url(
             forResource: "terminal", withExtension: "html", subdirectory: "TerminalAssets"
-        ) {
+        ) ?? Bundle.main.url(forResource: "terminal", withExtension: "html")
+        if let url = bundledPage {
             view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         } else {
             errorMessage = "Terminal resources are missing from the app bundle."
