@@ -63,6 +63,8 @@ final class LocalProcess: ExecutionProcess, @unchecked Sendable {
     let stdoutLines: AsyncThrowingStream<String, Error>
     let stderrLines: AsyncThrowingStream<String, Error>
     private let stdinHandle: FileHandle
+    private let stdoutReader: LinePipeReader
+    private let stderrReader: LinePipeReader
     private let exitAwaiter = ExitAwaiter()
 
     init(request: ExecutionRequest) throws {
@@ -86,6 +88,14 @@ final class LocalProcess: ExecutionProcess, @unchecked Sendable {
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         let stdinPipe = Pipe()
+        defer {
+            // Process keeps the Pipe objects as its stdio configuration.
+            // Close the copies owned by this parent after launch, or EOF is
+            // never delivered to the output readers when the child exits.
+            try? stdinPipe.fileHandleForReading.close()
+            try? stdoutPipe.fileHandleForWriting.close()
+            try? stderrPipe.fileHandleForWriting.close()
+        }
 
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = request.arguments
@@ -111,6 +121,8 @@ final class LocalProcess: ExecutionProcess, @unchecked Sendable {
 
         let stdoutReader = LinePipeReader(handle: stdoutPipe.fileHandleForReading)
         let stderrReader = LinePipeReader(handle: stderrPipe.fileHandleForReading)
+        self.stdoutReader = stdoutReader
+        self.stderrReader = stderrReader
         stdoutLines = stdoutReader.stream
         stderrLines = stderrReader.stream
 
