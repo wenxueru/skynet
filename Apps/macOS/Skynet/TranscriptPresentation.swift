@@ -111,6 +111,8 @@ private struct CollapsibleTextView: View {
         VStack(alignment: .leading, spacing: 6) {
             if rendersMarkdown {
                 MarkdownContentView(markdown: visibleText)
+            } else if let invocation = SkillInvocation(text: visibleText) {
+                SkillInvocationView(invocation: invocation)
             } else {
                 Text(verbatim: visibleText)
                     .textSelection(.enabled)
@@ -122,6 +124,56 @@ private struct CollapsibleTextView: View {
                 }
                 .buttonStyle(.link)
                 .font(.footnote)
+            }
+        }
+    }
+}
+
+private struct SkillInvocation {
+    let name: String
+    let remainder: String
+
+    init?(text: String) {
+        let textRange = NSRange(text.startIndex..., in: text)
+        guard let match = Self.pattern.firstMatch(in: text, range: textRange) else { return nil }
+
+        let isMarkdownLink = match.range(at: 1).location != NSNotFound
+        let nameGroup = isMarkdownLink ? 1 : 3
+        let pathGroup = isMarkdownLink ? 2 : 4
+        let nameRange = match.range(at: nameGroup)
+        let pathRange = match.range(at: pathGroup)
+        guard let nameRange = Range(nameRange, in: text),
+              let pathRange = Range(pathRange, in: text),
+              let invocationEnd = Range(match.range, in: text)?.upperBound else { return nil }
+        let path = String(text[pathRange])
+        guard URL(fileURLWithPath: path).lastPathComponent.lowercased() == "skill.md" else {
+            return nil
+        }
+
+        name = String(text[nameRange]).capitalized
+        remainder = text[invocationEnd...].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let pattern = try! NSRegularExpression(
+        pattern: #"^\s*(?:\[\$([A-Za-z0-9_.-]+)\]\(([^)\r\n]+)\)|\$([A-Za-z0-9_.-]+)\(([^)\r\n]+)\))(?=\s|$)"#
+    )
+}
+
+private struct SkillInvocationView: View {
+    let invocation: SkillInvocation
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Label(invocation.name, systemImage: "shippingbox")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.18), in: Capsule())
+            if !invocation.remainder.isEmpty {
+                Text(verbatim: invocation.remainder)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

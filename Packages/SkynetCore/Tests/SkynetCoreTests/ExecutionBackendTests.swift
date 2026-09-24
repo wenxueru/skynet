@@ -35,6 +35,47 @@ struct SSHFailureDiagnosticsTests {
         #expect(reason == "Remote transcript loading failed (exit status 3): Remote transcript exceeds the configured safety limit.")
     }
 }
+
+@Suite("Local process backend")
+struct LocalProcessBackendTests {
+    @Test func outputStreamsFinishWhenTheChildExits() async throws {
+        let process = try LocalProcessBackend().launch(
+            ExecutionRequest(
+                executable: "/bin/sh",
+                arguments: ["-c", "printf 'stdout\\n'; printf 'stderr\\n' >&2"],
+                label: "pipe-eof-test"
+            )
+        )
+
+        let exitCode = try await process.waitUntilExit()
+        #expect(exitCode == 0)
+        #expect(try await lines(from: process.stdoutLines) == ["stdout"])
+        #expect(try await lines(from: process.stderrLines) == ["stderr"])
+    }
+}
+
+private func lines(
+    from stream: AsyncThrowingStream<String, Error>,
+    timeout: Duration = .seconds(2)
+) async throws -> [String]? {
+    try await withThrowingTaskGroup(of: [String]?.self) { group in
+        group.addTask {
+            var output: [String] = []
+            for try await line in stream {
+                output.append(line)
+            }
+            return output
+        }
+        group.addTask {
+            try? await Task.sleep(for: timeout)
+            return nil
+        }
+
+        let result = try await group.next() ?? nil
+        group.cancelAll()
+        return result
+    }
+}
 #endif
 
 @Suite("Platform execution policy")
