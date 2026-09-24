@@ -20,6 +20,31 @@ struct MachineSessionSnapshot: Sendable {
 }
 
 enum MacSessionDiscovery {
+    /// Reconstructs the machine list from locally cached records and SSH
+    /// configuration without contacting any remote host.
+    static func cachedMachines(
+        projects: [Project],
+        sessions: [SessionRecord],
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [DiscoveredMachine] {
+        var machines = SSHConfigLoader.hosts(homeDirectory: homeDirectory).map { host in
+            DiscoveredMachine(id: host.id, name: host.displayName, sshAlias: host.alias)
+        }
+        var seenMachineIDs = Set(machines.map(\.id))
+        let cachedBackendIDs = Set(projects.compactMap { $0.metadata["backendID"] }
+            + sessions.compactMap { $0.backendID?.rawValue })
+        for rawID in cachedBackendIDs where rawID.hasPrefix("ssh:") {
+            let id = BackendID(rawID)
+            guard seenMachineIDs.insert(id).inserted else { continue }
+            let alias = String(rawID.dropFirst("ssh:".count))
+            machines.append(DiscoveredMachine(id: id, name: alias, sshAlias: alias))
+        }
+
+        return [.local] + machines.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
     static func discover(excluding disabledMachineIDs: Set<BackendID> = []) async -> [MachineSessionSnapshot] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let localSessions: [DiscoveredSession]

@@ -229,11 +229,6 @@ struct SessionDetailView: View {
                 .help("Rename session")
             }
             Spacer(minLength: 0)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    NSApp.keyWindow?.performZoom(nil)
-                }
             if model.isSelectedSessionRunning {
                 ProgressView().controlSize(.small)
             }
@@ -300,7 +295,15 @@ struct SessionDetailView: View {
             }
         }
         .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity)
         .frame(height: 48)
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    (NSApp.keyWindow ?? NSApp.mainWindow)?.performZoom(nil)
+                }
+        }
     }
 
     private var environmentPanel: some View {

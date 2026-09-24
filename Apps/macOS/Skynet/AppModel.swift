@@ -235,6 +235,7 @@ final class AppModel {
         do {
             projects = try store.loadProjects().sorted { $0.updatedAt > $1.updatedAt }
             sessions = try store.loadSessions(matching: nil)
+            machines = MacSessionDiscovery.cachedMachines(projects: projects, sessions: sessions)
             recoverInterruptedLocalSessions(in: &sessions, store: store)
             scheduledQueueSessionIDs = Set(sessions.compactMap { session in
                 queueEntries(for: session.id).contains(where: {
