@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SkynetCore
+import ImageIO
 
 @MainActor
 @Observable
@@ -27,36 +28,29 @@ final class AppModel {
         var input: JSONValue
         var output: String?
         var isError = false
-    }
-
-    private struct TranscriptLoadResult: Sendable {
-        let messages: [Message]
-        let olderCursor: Int64?
-        let errorMessage: String?
-    }
-
-    private enum TranscriptCursor {
-        case provider(Int64)
-        case cache(Int64)
-    }
-
-    private struct TranscriptMessageKey: Hashable {
-        let origin: String
-        let createdAt: Date
-        let content: [ContentBlock]
+        var subagentStatus: SubagentStatusReport.Status?
     }
 
     var projects: [Project] = []
     var sessions: [SessionRecord] = []
     var providers: [AgentProviderDescriptor] = AgentProviderDescriptor.builtIns
-    var selectedProjectID: ProjectID?
-    var selectedSessionID: SessionID?
-    var messages: [Message] = [] {
-        didSet { transcriptGroups = TranscriptGrouping.groups(messages) }
+    var selectedProjectID: ProjectID? {
+        didSet { UserDefaults.standard.set(selectedProjectID?.description, forKey: AppPreferenceKey.selectedProject) }
     }
-    private(set) var transcriptGroups: [TranscriptGroup] = []
+    var selectedSessionID: SessionID? {
+        didSet {
+            transcript.selectedSessionID = selectedSessionID
+            UserDefaults.standard.set(selectedSessionID?.description, forKey: AppPreferenceKey.selectedSession)
+        }
+    }
+    var messages: [Message] {
+        get { transcript.messages }
+        set { transcript.messages = newValue }
+    }
+    var transcriptGroups: [TranscriptGroup] { transcript.groups }
     var liveText = ""
     var liveThinking = ""
+    var liveStatusText: String?
     var liveTools: [LiveTool] = []
     var searchText = ""
     var isRunning = false
@@ -75,35 +69,41 @@ final class AppModel {
         isSelectedSessionRunning && steeringQueuedPromptID == nil
     }
     var scheduledDispatchingSessionID: SessionID? { scheduledDispatchSessionID }
+    var canStopSelectedSession: Bool {
+        isSelectedSessionRunning
+            || (selectedSessionID != nil && selectedSessionID == scheduledDispatchSessionID)
+    }
     var pendingPermissionRequest: PermissionRequest?
     var pendingPermissionSessionTitle: String?
-    var machines: [DiscoveredMachine] = [.local]
-    var disabledMachineIDs: Set<BackendID>
+    var machines: [DiscoveredMachine] = [.local] {
+        didSet { connectivity.configure(machines: visibleMachines) }
+    }
+    var disabledMachineIDs: Set<BackendID> {
+        didSet { connectivity.configure(machines: visibleMachines) }
+    }
+    let connectivity = NetworkConnectivityMonitor()
     private var deletedDiscoveryKeys: Set<DiscoverySessionKey>
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
-    var isLoadingTranscript = false
-    var isLoadingOlderTranscript: Bool {
-        selectedSessionID != nil && loadingOlderTranscriptSessionID == selectedSessionID
-    }
+    var isLoadingTranscript: Bool { transcript.isLoadingTranscript }
+    var isLoadingOlderTranscript: Bool { transcript.isLoadingOlderTranscript }
     private(set) var storageDirectoryURL: URL?
 
     private let store: JSONDiskStore?
+    private let transcript: SessionTranscriptController
     private var activeSession: AgentSession?
     private var activeTurnSessionID: SessionID?
     private var liveSessionID: SessionID?
     private var streamTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
-    private var transcriptTask: Task<Void, Never>?
-    private var loadingOlderTranscriptSessionID: SessionID?
     private var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
+    private var pendingPermissionSessionID: SessionID?
+    private var permissionRequestToken: UUID?
     private var scheduleTimer: Task<Void, Never>?
     private var scheduledDispatch: Task<Void, Never>?
     private var scheduledDispatchSessionID: SessionID?
+    private var scheduledSession: AgentSession?
     private var scheduledQueueSessionIDs: Set<SessionID> = []
-    private var transcriptCursors: [SessionID: TranscriptCursor] = [:]
-    private var transcriptCacheCursors: [SessionID: Int64] = [:]
-    private var transcriptLoadToken = UUID()
 
     private static let disabledMachinesKey = "disabledMachineIDs"
     private static let deletedDiscoveryKeysKey = "deletedDiscoveryKeys"
@@ -126,6 +126,7 @@ final class AppModel {
             let storageURL = base.appendingPathComponent("Skynet", isDirectory: true)
             storageDirectoryURL = storageURL
             store = try JSONDiskStore(rootURL: storageURL)
+            transcript = SessionTranscriptController(store: store)
             load()
             refreshDiscovery()
             scheduleTimer = Task { [weak self] in
@@ -136,6 +137,7 @@ final class AppModel {
             }
         } catch {
             store = nil
+            transcript = SessionTranscriptController(store: nil)
             errorMessage = "Unable to initialize Skynet storage: \(error.localizedDescription)"
         }
     }
@@ -148,8 +150,18 @@ final class AppModel {
         sessions.first { $0.id == selectedSessionID }
     }
 
+    var connectivityWarning: String? {
+        if connectivity.networkAvailable == false {
+            return "Network unavailable. Cached sessions remain available; reconnect to send messages."
+        }
+        guard let id = selectedSession?.backendID,
+              let failure = connectivity.hosts[id]?.failure else { return nil }
+        let name = machines.first { $0.id == id }?.name ?? id.rawValue
+        return "\(name) is unavailable. Retrying automatically. \(failure)"
+    }
+
     var canLoadOlderTranscript: Bool {
-        selectedSessionID.flatMap { transcriptCursors[$0] } != nil
+        transcript.canLoadOlderTranscript
     }
 
     var selectedProvider: AgentProviderDescriptor? {
@@ -213,6 +225,11 @@ final class AppModel {
     }
 
     func refreshDiscovery() {
+        // The selected transcript has its own paged loader; do not make it
+        // wait for discovery of every local and remote session.
+        if let selectedSessionID, !isLoadingOlderTranscript {
+            loadTranscript(for: selectedSessionID, preservePagination: true)
+        }
         guard !isDiscovering else { return }
         isDiscovering = true
         discoveryTask?.cancel()
@@ -245,13 +262,27 @@ final class AppModel {
             providers = try ProviderCatalog.effective(
                 userConfigured: store.loadUserProviders()
             ).providers
+            if selectedSessionID == nil,
+               let rawID = UserDefaults.standard.string(forKey: AppPreferenceKey.selectedSession),
+               let uuid = UUID(uuidString: rawID),
+               let session = sessions.first(where: { $0.id == SessionID(uuid) && $0.isArchived != true }),
+               projects.contains(where: { $0.id == session.projectID }) {
+                selectedProjectID = session.projectID
+                selectedSessionID = session.id
+            }
+            if selectedProjectID == nil,
+               let rawID = UserDefaults.standard.string(forKey: AppPreferenceKey.selectedProject),
+               let uuid = UUID(uuidString: rawID),
+               projects.contains(where: { $0.id == ProjectID(uuid) }) {
+                selectedProjectID = ProjectID(uuid)
+            }
             if selectedProjectID == nil { selectedProjectID = projects.first?.id }
             if selectedSessionID == nil, let project = selectedProject {
                 selectedSessionID = sessions(for: project).first?.id
             }
             if let selectedSessionID {
                 loadQueue(for: selectedSessionID)
-                loadTranscript(for: selectedSessionID, includeProviderHistory: false)
+                loadTranscript(for: selectedSessionID)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -392,12 +423,33 @@ final class AppModel {
         Task {
             do {
                 let store = try requireStore()
-                let messages = try await Task.detached(priority: .userInitiated) {
+                let cachedMessages = try await Task.detached(priority: .userInitiated) {
                     try store.loadMessages(for: session.id)
                 }.value
-                let data = try SessionTranscriptExport.data(
-                    session: session, messages: messages, format: format
-                )
+                // Export the whole provider-backed transcript, not only the
+                // cache or the currently visible page. Each read stays bounded.
+                var cursor: Int64?
+                var providerMessages: [Message] = []
+                repeat {
+                    try Task.checkCancellation()
+                    guard let page = try await SessionTranscriptDiscovery.transcriptPage(
+                        for: session, before: cursor
+                    ) else { break }
+                    providerMessages.append(contentsOf: page.session.messages)
+                    if let next = page.olderCursor, let cursor, next >= cursor {
+                        throw SkynetError.executionFailed(reason: "History export cursor did not advance.")
+                    }
+                    cursor = page.olderCursor
+                } while cursor != nil
+                let history = providerMessages
+                let data = try await Task.detached(priority: .userInitiated) {
+                    try SessionTranscriptExport.data(
+                        session: session,
+                        messages: TranscriptMessageMerger.merge(cachedMessages, history),
+                        format: format,
+                        loadBlob: { try store.loadBlob($0) }
+                    )
+                }.value
                 let panel = NSSavePanel()
                 let safeTitle = (session.title ?? "session")
                     .replacingOccurrences(of: "/", with: "-")
@@ -412,13 +464,9 @@ final class AppModel {
     }
 
     func clearSessionSelection() {
-        transcriptLoadToken = UUID()
+        transcript.clear()
         selectedSessionID = nil
-        transcriptTask?.cancel()
-        transcriptTask = nil
-        messages = []
         queuedPrompts = []
-        isLoadingTranscript = false
         resetLiveState()
     }
 
@@ -813,6 +861,16 @@ final class AppModel {
         save(session)
     }
 
+    var permissionDecisionAction: (PermissionResponse.Decision) -> Void {
+        let token = permissionRequestToken
+        return { [weak self] decision in
+            // A sheet callback can outlive its request. Provider IDs/session
+            // IDs may be reused; only its captured continuation may be answered.
+            guard let self, let token, self.permissionRequestToken == token else { return }
+            self.answerPermission(decision)
+        }
+    }
+
     func answerPermission(_ decision: PermissionResponse.Decision) {
         guard let request = pendingPermissionRequest else { return }
         permissionContinuation?.resume(
@@ -821,6 +879,8 @@ final class AppModel {
         permissionContinuation = nil
         pendingPermissionRequest = nil
         pendingPermissionSessionTitle = nil
+        pendingPermissionSessionID = nil
+        permissionRequestToken = nil
     }
 
     func attachImage(url: URL) {
@@ -829,15 +889,7 @@ final class AppModel {
             if isSecurityScoped { url.stopAccessingSecurityScopedResource() }
         }
         do {
-            let data = try Data(contentsOf: url)
-            let mediaType: String
-            switch url.pathExtension.lowercased() {
-            case "jpg", "jpeg": mediaType = "image/jpeg"
-            case "gif": mediaType = "image/gif"
-            case "webp": mediaType = "image/webp"
-            default: mediaType = "image/png"
-            }
-            attachImage(data: data, mediaType: mediaType, fileName: url.lastPathComponent)
+            pendingAttachments.append(try ComposerImageImport.load(url: url))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -864,6 +916,10 @@ final class AppModel {
         guard let index = pendingAttachments.firstIndex(where: { $0.id == id }),
               pendingAttachments.indices.contains(index + offset) else { return }
         pendingAttachments.swapAt(index, index + offset)
+    }
+
+    var shouldQueueComposerSubmission: Bool {
+        isRunning || (selectedSessionID != nil && scheduledDispatchSessionID == selectedSessionID)
     }
 
     func enqueueDraft(_ text: String, scheduledAt: Date? = nil) -> Bool {
@@ -1077,9 +1133,11 @@ final class AppModel {
     private func sendQueuedPrompt(_ entry: QueuedPrompt, for sessionID: SessionID) {
         guard selectedSessionID == sessionID else { return }
         let composerAttachments = pendingAttachments
+        // send can reject synchronously without consuming the queue's images.
+        // Its temporary input must never become part of the independent draft.
+        defer { pendingAttachments = composerAttachments }
         pendingAttachments = entry.attachments
         send(entry.text, queuedEntry: entry)
-        pendingAttachments.insert(contentsOf: composerAttachments, at: 0)
     }
 
     private func deliverMatureScheduledMessage() {
@@ -1098,19 +1156,26 @@ final class AppModel {
         scheduledDispatchSessionID = record.id
         scheduledDispatch = Task { [weak self] in
             guard let self else { return }
+            var deliveredSuccessfully = false
+            var dispatchMarked = false
+            var agent: AgentSession?
             defer {
                 scheduledDispatch = nil
                 scheduledDispatchSessionID = nil
+                scheduledSession = nil
+                if deliveredSuccessfully, !Task.isCancelled { sendNextQueued(for: record.id) }
                 deliverMatureScheduledMessage()
             }
             do {
+                try Task.checkCancellation()
                 var queue = queueEntries(for: record.id)
                 guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
                 queue[index].dispatchStartedAt = Date()
                 try persistQueue(queue, for: record.id)
+                dispatchMarked = true
                 if selectedSessionID == record.id { queuedPrompts = queue }
 
-                let agent = try AgentSession(
+                let executor = try SessionTurnExecutor(
                     record: record,
                     configuration: .init(
                         provider: provider,
@@ -1121,23 +1186,44 @@ final class AppModel {
                                 return PermissionResponse(requestID: request.id, decision: .deny)
                             }
                             return await self.requestPermission(
-                                request, sessionTitle: record.title ?? "Scheduled session"
+                                request, sessionID: record.id,
+                                sessionTitle: record.title ?? "Scheduled session"
                             )
                         },
                         store: store
                     )
                 )
-                try await agent.loadPersistedTranscript()
-                let stream = try await agent.send(entry.text)
-                for try await _ in stream {}
-                removeQueuedPrompt(entry.id, for: record.id)
-                var updated = await agent.record
+                agent = executor.session
+                scheduledSession = executor.session
+                let result = try await executor.runScheduled(entry.text)
+                var updated = result.record
                 if selectedSessionID != record.id { updated.markedUnreadAt = Date() }
                 try store.saveSession(updated)
                 replace(updated)
                 if selectedSessionID == record.id { loadTranscript(for: record.id) }
+                if let failure = result.failure { throw failure }
+                guard result.completedSuccessfully else {
+                    throw SkynetError.executionFailed(reason: "Scheduled turn did not complete successfully.")
+                }
+                removeQueuedPrompt(entry.id, for: record.id)
+                deliveredSuccessfully = !queueEntries(for: record.id).contains { $0.id == entry.id }
             } catch {
+                if !dispatchMarked {
+                    // An unwritten marker leaves this same entry eligible and
+                    // defer would retry immediately. Pause this registration
+                    // until queue re-persistence or reload re-arms it, without
+                    // starving other sessions.
+                    scheduledQueueSessionIDs.remove(record.id)
+                }
                 errorMessage = "Scheduled message needs review: \(error.localizedDescription)"
+            }
+            // Keep ownership until provider termination is finished, just as
+            // ordinary Stop does. A cancelled consumer alone is not an exit.
+            if Task.isCancelled, let agent {
+                await agent.cancelActiveTurn()
+                let updated = await agent.record
+                replace(updated)
+                if selectedSessionID == record.id { loadTranscript(for: record.id) }
             }
         }
     }
@@ -1167,26 +1253,28 @@ final class AppModel {
         streamTask?.cancel()
         streamTask = Task { [weak self] in
             guard let self else { return }
-            var didStartTurn = false
             var completedTurn = false
+            let activityStart = Date()
             defer {
                 isRunning = false
                 activeTurnSessionID = nil
                 workingSince = nil
                 activeSession = nil
+                liveStatusText = nil
                 streamTask = nil
+                if Task.isCancelled { liveTools.removeAll() }
                 let steeredID = steeringQueuedPromptID
                 steeringQueuedPromptID = nil
                 if let steeredID,
-                   !completedTurn,
                    let entry = queueEntries(for: record.id).first(where: { $0.id == steeredID }) {
                     sendQueuedPrompt(entry, for: record.id)
-                } else if completedTurn {
+                } else if completedTurn, !Task.isCancelled {
                     sendNextQueued(for: record.id)
                 }
             }
             do {
-                let session = try AgentSession(
+                try Task.checkCancellation()
+                let executor = try SessionTurnExecutor(
                     record: record,
                     configuration: .init(
                         provider: provider,
@@ -1207,44 +1295,86 @@ final class AppModel {
                                         reason: "The session is no longer available."
                                     )
                                 }
-                                return await self.requestPermission(request)
+                                return await self.requestPermission(request, sessionID: record.id)
                             }
                             : nil,
                         store: store
                     )
                 )
-                activeSession = session
-                try await session.loadPersistedTranscript()
-                let expandedPrompt = await Task.detached(priority: .userInitiated) {
-                    SessionReferenceContext.expand(prompt, sessions: referenceSessions) { id in
-                        try? store.loadMessages(for: id)
-                    }
-                }.value
-                let stream = try await session.send(expandedPrompt, attachments: attachments)
-                didStartTurn = true
-                if let queuedEntry { removeQueuedPrompt(queuedEntry.id, for: record.id) }
-                for try await event in stream {
-                    apply(event, sessionID: record.id)
-                }
-                let updated = await session.record
-                replace(updated)
-                completedTurn = true
+                activeSession = executor.session
+                completedTurn = await executor.runOrdinary(
+                    prompt, attachments: attachments, referenceSessions: referenceSessions,
+                    store: store, activityStart: activityStart,
+                    callbacks: .init(
+                        started: {
+                            if let queuedEntry { self.removeQueuedPrompt(queuedEntry.id, for: record.id) }
+                        },
+                        receive: { self.apply($0, sessionID: record.id) },
+                        updateRecord: { self.replace($0) },
+                        failed: { error, started in
+                            self.handleTurnFailure(error, didStartTurn: started,
+                                                   record: record, attachments: attachments,
+                                                   queuedEntry: queuedEntry)
+                        }
+                    )
+                )
             } catch {
-                if !(error is CancellationError), steeringQueuedPromptID == nil {
-                    errorMessage = error.localizedDescription
-                }
-                if !didStartTurn {
-                    if queuedEntry == nil {
-                        pendingAttachments.insert(contentsOf: attachments, at: 0)
-                    }
-                }
+                // The executor consumes turn errors; only pre-turn setup can throw here.
+                handleTurnFailure(error, didStartTurn: false,
+                                  record: record, attachments: attachments, queuedEntry: queuedEntry)
             }
         }
     }
 
+    private func handleTurnFailure(
+        _ error: Error, didStartTurn: Bool, record: SessionRecord,
+        attachments: [ImageAttachment], queuedEntry: QueuedPrompt?
+    ) {
+        if !(error is CancellationError), steeringQueuedPromptID == nil {
+            errorMessage = error.localizedDescription
+        }
+        if !didStartTurn, queuedEntry == nil, selectedSessionID == record.id {
+            pendingAttachments.insert(contentsOf: attachments, at: 0)
+        }
+    }
+
     func cancel() {
-        answerPermission(.deny)
-        Task { await activeSession?.cancelActiveTurn() }
+        turnCancellationAction(for: selectedSessionID)?()
+    }
+
+    var canStopPermissionTurn: Bool {
+        permissionTurnStopAction != nil
+    }
+
+    var permissionTurnStopAction: (() -> Void)? {
+        // Capture while building the dialog: native dismissal can clear the
+        // pending request before the button's action runs.
+        turnCancellationAction(for: pendingPermissionSessionID)
+    }
+
+    private func turnCancellationAction(for sessionID: SessionID?) -> (() -> Void)? {
+        guard let sessionID else { return nil }
+        let session: AgentSession?
+        let task: Task<Void, Never>?
+        if sessionID == scheduledDispatchSessionID {
+            session = scheduledSession
+            task = scheduledDispatch
+        } else {
+            guard sessionID == activeTurnSessionID else { return nil }
+            session = activeSession
+            task = streamTask
+        }
+        let permissionToken = permissionRequestToken
+        return { [weak self] in
+            if let self, self.pendingPermissionSessionID == sessionID,
+               self.permissionRequestToken == permissionToken {
+                self.answerPermission(.deny)
+            }
+            // Exact task/actor snapshots cannot target a later turn, even if
+            // selection, request ID or the request owner changes meanwhile.
+            task?.cancel()
+            Task { await session?.cancelActiveTurn() }
+        }
     }
 
     func saveCustomProvider(
@@ -1292,16 +1422,41 @@ final class AppModel {
         switch event {
         case .textDelta(let text): liveText += text
         case .thinkingDelta(let text): liveThinking += text
+        case .statusUpdate(let text): liveStatusText = text
         case .messageCompleted(let message):
             guard selectedSessionID == sessionID else { return }
             if !messages.contains(where: { $0.id == message.id }) { messages.append(message) }
         case .toolCallStarted(let call):
-            liveTools.append(LiveTool(id: call.id, name: call.name, input: call.input))
+            if !liveTools.contains(where: { $0.id == call.id }) {
+                liveTools.append(LiveTool(id: call.id, name: call.name, input: call.input))
+            }
         case .toolCallCompleted(let result):
             if let index = liveTools.firstIndex(where: { $0.id == result.toolCallID }) {
                 liveTools[index].output = result.content
                 liveTools[index].isError = result.isError
             }
+        case .subagentStatusReported(let report):
+            let id = ToolCallID("subagent:\(report.agentThreadID)")
+            let index = liveTools.firstIndex(where: { $0.id == id })
+            let path = report.agentPath
+                ?? index.flatMap { liveTools[$0].input["agent_path"]?.stringValue }
+                ?? report.agentThreadID
+            let row = LiveTool(
+                id: id, name: "Subagent",
+                input: ["agent_thread_id": .string(report.agentThreadID),
+                        "agent_path": .string(path)],
+                output: report.status.isActive ? nil : report.message ?? "",
+                isError: report.status.isError, subagentStatus: report.status
+            )
+            if let index {
+                liveTools[index] = row
+            } else {
+                liveTools.append(row)
+            }
+        case .turnCompleted(let summary) where summary.stopReason == .cancelled:
+            // Cancelled providers may exit without individual tool-completion
+            // events. Their previous live rows are no longer current activity.
+            liveTools.removeAll()
         case .turnFailed(let failure): errorMessage = failure.error.localizedDescription
         default: break
         }
@@ -1350,13 +1505,15 @@ final class AppModel {
             if sessionIndexes[key] == nil { sessionIndexes[key] = index }
         }
         for snapshot in snapshots {
-            for discovered in snapshot.sessions {
+            var importedKeys = Set<DiscoverySessionKey>()
+            for discovered in snapshot.sessions.sorted(by: { $0.updatedAt > $1.updatedAt }) {
                 let key = DiscoverySessionKey(
                     backendID: snapshot.machine.id,
                     providerID: discovered.providerID,
                     resumeToken: discovered.providerSessionID
                 )
-                guard !deletedDiscoveryKeys.contains(key) else { continue }
+                guard importedKeys.insert(key).inserted,
+                      !deletedDiscoveryKeys.contains(key) else { continue }
                 let project = project(
                     for: discovered.workingDirectory,
                     backendID: snapshot.machine.id
@@ -1389,8 +1546,9 @@ final class AppModel {
                 let shouldReplaceMessages = existingIndex == nil
                     || (isRemote
                         ? discovered.messages.count > record.messageCount
-                        : record.messageCount != discovered.messages.count
-                            || previousUpdatedAt < discovered.updatedAt)
+                        : discovered.messages.count > record.messageCount
+                            || (discovered.messages.count == record.messageCount
+                                && previousUpdatedAt < discovered.updatedAt))
                 if existingIndex != nil,
                    selectedSessionID != record.id,
                    discovered.messages.count > previousMessageCount,
@@ -1407,7 +1565,7 @@ final class AppModel {
                 }
                 if !discovered.messages.isEmpty, shouldReplaceMessages || needsImageUpgrade {
                     record.messageCount = discovered.messages.count
-                    let messages = try Self.persistableMessages(discovered.messages, store: store)
+                    let messages = try SessionTranscriptController.persistableMessages(discovered.messages, store: store)
                     try store.replaceMessages(messages, for: record.id)
                 }
                 try store.saveSession(record)
@@ -1424,8 +1582,8 @@ final class AppModel {
         if selectedProjectID == nil {
             selectedProjectID = projects.first?.id
         }
-        if let selectedSessionID {
-            loadTranscript(for: selectedSessionID)
+        if let selectedSessionID, !isLoadingOlderTranscript {
+            loadTranscript(for: selectedSessionID, preservePagination: true)
         }
     }
 
@@ -1472,7 +1630,7 @@ final class AppModel {
         return project
     }
 
-    private func executionBackend(for record: SessionRecord) -> any ExecutionBackend {
+    func executionBackend(for record: SessionRecord) -> any ExecutionBackend {
         let backendID = record.backendID ?? DiscoveredMachine.local.id
         guard backendID.rawValue.hasPrefix("ssh:") else {
             return LocalProcessBackend()
@@ -1484,13 +1642,18 @@ final class AppModel {
     private func resetLiveState(for sessionID: SessionID? = nil) {
         liveText = ""
         liveThinking = ""
+        liveStatusText = nil
         liveTools = []
         liveSessionID = sessionID
     }
 
     private func requestPermission(
-        _ request: PermissionRequest, sessionTitle: String? = nil
+        _ request: PermissionRequest, sessionID: SessionID, sessionTitle: String? = nil
     ) async -> PermissionResponse {
+        guard !Task.isCancelled else {
+            return PermissionResponse(requestID: request.id, decision: .deny,
+                                      reason: "The permission request was cancelled.")
+        }
         if let pendingPermissionRequest {
             permissionContinuation?.resume(
                 returning: PermissionResponse(
@@ -1500,204 +1663,50 @@ final class AppModel {
                 )
             )
         }
-        return await withCheckedContinuation { continuation in
-            pendingPermissionRequest = request
-            pendingPermissionSessionTitle = sessionTitle
-            permissionContinuation = continuation
+        let token = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingPermissionRequest = request
+                pendingPermissionSessionTitle = sessionTitle
+                pendingPermissionSessionID = sessionID
+                permissionRequestToken = token
+                permissionContinuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                // Providers can reuse request IDs. Only this exact installed
+                // continuation may be denied by its cancellation callback.
+                guard let self, self.permissionRequestToken == token else { return }
+                self.answerPermission(.deny)
+            }
         }
+    }
+
+    private var transcriptHooks: SessionTranscriptController.Hooks {
+        .init(
+            record: { [weak self] id in self?.sessions.first { $0.id == id } },
+            save: { [weak self] in self?.save($0) },
+            reportError: { [weak self] in self?.errorMessage = $0 }
+        )
     }
 
     private func loadTranscript(
         for sessionID: SessionID,
-        includeProviderHistory: Bool = true
+        includeProviderHistory: Bool = true,
+        preservePagination: Bool = false
     ) {
-        let loadToken = UUID()
-        transcriptLoadToken = loadToken
-        transcriptTask?.cancel()
-        transcriptCursors[sessionID] = nil
-        transcriptCacheCursors[sessionID] = nil
-        let store: JSONDiskStore
-        do {
-            store = try requireStore()
-        } catch {
-            errorMessage = error.localizedDescription
-            isLoadingTranscript = false
-            return
-        }
-        isLoadingTranscript = messages.isEmpty
-        let transcriptRecord: SessionRecord?
-        if includeProviderHistory {
-            transcriptRecord = sessions.first {
-                $0.id == sessionID
-                    && $0.providerResumeToken != nil
-                    && ($0.backendID == DiscoveredMachine.local.id
-                        || $0.backendID?.rawValue.hasPrefix("ssh:") == true)
-            }
-        } else {
-            transcriptRecord = nil
-        }
-        transcriptTask = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                do {
-                    let page = try store.loadMessagesPage(for: sessionID)
-                    return TranscriptLoadResult(
-                        messages: page.messages,
-                        olderCursor: page.olderCursor,
-                        errorMessage: nil
-                    )
-                } catch {
-                    return TranscriptLoadResult(
-                        messages: [],
-                        olderCursor: nil,
-                        errorMessage: error.localizedDescription
-                    )
-                }
-            }.value
-            guard let self,
-                  !Task.isCancelled,
-                  isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-            messages = Self.mergeTranscriptMessages(result.messages, messages)
-            errorMessage = result.errorMessage
-            transcriptCacheCursors[sessionID] = result.olderCursor
-            transcriptCursors[sessionID] = result.olderCursor.map(TranscriptCursor.cache)
-            isLoadingTranscript = false
-            if let transcriptRecord {
-                do {
-                    if let page = try await SessionTranscriptDiscovery.transcriptPage(for: transcriptRecord) {
-                        guard !Task.isCancelled,
-                              isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                        let imported = page.session
-                        let mergedMessages = Self.mergeTranscriptMessages(
-                            imported.messages, messages
-                        )
-                        let visibleMessages = try await Self.persistableMessagesInBackground(
-                            mergedMessages, store: store
-                        )
-                        guard !Task.isCancelled,
-                              isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                        messages = Self.mergeTranscriptMessages(visibleMessages, messages)
-                        transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.provider)
-                            ?? transcriptCacheCursors[sessionID].map(TranscriptCursor.cache)
-                        var updated = transcriptRecord
-                        updated.updatedAt = max(updated.updatedAt, imported.updatedAt)
-                        save(updated)
-                    }
-                } catch {
-                    guard !Task.isCancelled,
-                          isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                    errorMessage = "Session history could not be fully loaded: \(error.localizedDescription)"
-                }
-            }
-            guard !Task.isCancelled,
-                  isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-            transcriptTask = nil
-        }
-    }
-
-    private func isCurrentTranscriptLoad(_ token: UUID, for sessionID: SessionID) -> Bool {
-        selectedSessionID == sessionID && transcriptLoadToken == token
+        let record = includeProviderHistory ? sessions.first {
+            $0.id == sessionID
+                && $0.providerResumeToken != nil
+                && ($0.backendID == DiscoveredMachine.local.id
+                    || $0.backendID?.rawValue.hasPrefix("ssh:") == true)
+        } : nil
+        transcript.load(for: sessionID, record: record,
+                        preservePagination: preservePagination, hooks: transcriptHooks)
     }
 
     func loadOlderTranscript() async {
-        guard let sessionID = selectedSessionID,
-              loadingOlderTranscriptSessionID != sessionID,
-              let cursor = transcriptCursors[sessionID],
-              let store else { return }
-        let loadToken = transcriptLoadToken
-        loadingOlderTranscriptSessionID = sessionID
-        defer {
-            if loadingOlderTranscriptSessionID == sessionID {
-                loadingOlderTranscriptSessionID = nil
-            }
-        }
-
-        do {
-            switch cursor {
-            case .provider(let sourceCursor):
-                guard let record = sessions.first(where: { $0.id == sessionID }) else {
-                    transcriptCursors[sessionID] = transcriptCacheCursors[sessionID]
-                        .map(TranscriptCursor.cache)
-                    return
-                }
-                let page = try await SessionTranscriptDiscovery.transcriptPage(
-                    for: record, before: sourceCursor
-                )
-                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                guard let page else {
-                    transcriptCursors[sessionID] = transcriptCacheCursors[sessionID]
-                        .map(TranscriptCursor.cache)
-                    return
-                }
-                let mergedMessages = Self.mergeTranscriptMessages(page.session.messages, messages)
-                let visibleMessages = try await Self.persistableMessagesInBackground(
-                    mergedMessages, store: store
-                )
-                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                messages = Self.mergeTranscriptMessages(visibleMessages, messages)
-                transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.provider)
-                    ?? transcriptCacheCursors[sessionID].map(TranscriptCursor.cache)
-
-            case .cache(let cacheCursor):
-                let page = try await Task.detached(priority: .userInitiated) {
-                    try store.loadMessagesPage(for: sessionID, before: cacheCursor)
-                }.value
-                guard isCurrentTranscriptLoad(loadToken, for: sessionID) else { return }
-                messages = Self.mergeTranscriptMessages(page.messages, messages)
-                transcriptCacheCursors[sessionID] = page.olderCursor
-                if let currentCursor = transcriptCursors[sessionID],
-                   case .provider = currentCursor {
-                    return
-                }
-                transcriptCursors[sessionID] = page.olderCursor.map(TranscriptCursor.cache)
-            }
-        } catch {
-            if isCurrentTranscriptLoad(loadToken, for: sessionID) {
-                errorMessage = "Could not load older session messages: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    nonisolated private static func mergeTranscriptMessages(
-        _ older: [Message],
-        _ newer: [Message]
-    ) -> [Message] {
-        var seen = Set<TranscriptMessageKey>()
-        return (older + newer)
-            .filter {
-                seen.insert(TranscriptMessageKey(
-                    origin: $0.origin.rawValue,
-                    createdAt: $0.createdAt,
-                    content: $0.content
-                )).inserted
-            }
-            .sorted { $0.createdAt < $1.createdAt }
-    }
-
-    nonisolated private static func persistableMessages(
-        _ messages: [Message],
-        store: JSONDiskStore
-    ) throws -> [Message] {
-        try messages.map { message in
-            var stored = message
-            stored.content = try message.content.map { block in
-                guard case .image(var attachment) = block,
-                      case .inline(let data, let mediaType) = attachment.payload else { return block }
-                attachment.payload = .blob(try store.storeBlob(
-                    data, mediaType: mediaType, fileName: attachment.fileName
-                ))
-                return .image(attachment)
-            }
-            return stored
-        }
-    }
-
-    nonisolated private static func persistableMessagesInBackground(
-        _ messages: [Message],
-        store: JSONDiskStore
-    ) async throws -> [Message] {
-        try await Task.detached(priority: .userInitiated) {
-            try persistableMessages(messages, store: store)
-        }.value
+        await transcript.loadOlderTranscript(hooks: transcriptHooks)
     }
 
     func loadUsageSummary(range: SessionUsageRange) async throws -> SessionUsageSummary {
@@ -1726,5 +1735,50 @@ private struct AppPermissionResponder: PermissionResponder {
 
     func decide(_ request: PermissionRequest) async -> PermissionResponse {
         await handler(request)
+    }
+}
+
+private enum ComposerImageImport {
+    static func load(url: URL) throws -> ImageAttachment {
+        let data = try Data(contentsOf: url)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) else {
+            throw ImportError.invalidImage(url.lastPathComponent)
+        }
+        // Detect the bytes, not the extension. Keep supported representations
+        // intact (including GIF animation); normalize other native formats.
+        let mediaType: String
+        switch type as String {
+        case "public.png": mediaType = "image/png"
+        case "public.jpeg": mediaType = "image/jpeg"
+        case "com.compuserve.gif": mediaType = "image/gif"
+        case "org.webmproject.webp": mediaType = "image/webp"
+        default:
+            // Full-size transformed decoding preserves the displayed photo
+            // orientation when converting away from EXIF-carrying formats.
+            // No maximum size is supplied, so this does not downsample.
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+            ] as CFDictionary),
+                let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+                throw ImportError.invalidImage(url.lastPathComponent)
+            }
+            return ImageAttachment(data: png, mediaType: "image/png", fileName: url.lastPathComponent)
+        }
+        guard CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
+            throw ImportError.invalidImage(url.lastPathComponent)
+        }
+        return ImageAttachment(data: data, mediaType: mediaType, fileName: url.lastPathComponent)
+    }
+
+    private enum ImportError: LocalizedError {
+        case invalidImage(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidImage(let name): "\(name) is not a readable image."
+            }
+        }
     }
 }

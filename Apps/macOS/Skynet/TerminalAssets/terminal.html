@@ -39,6 +39,10 @@
       terminal.write(decoder.decode(bytes, { stream: true }));
     };
     window.focusTerminal = () => terminal.focus();
+    window.pasteTerminalBase64 = base64 => {
+      const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      terminal.paste(new TextDecoder('utf-8').decode(bytes));
+    };
     fit.fit();
     bridge.postMessage({ type: 'ready', cols: terminal.cols, rows: terminal.rows });
   </script>

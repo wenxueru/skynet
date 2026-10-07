@@ -252,6 +252,35 @@ struct ClaudeCodeAdapterTests {
         #expect(events.compactMap(\.turnCompleted).first?.stopReason == .stopped)
     }
 
+    @Test(arguments: [
+        (#"{"type":"result","subtype":"success","is_error":true,"result":"API Error: unavailable","usage":{"input_tokens":7}}"#, "API Error: unavailable"),
+        (#"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["first failure","second failure"],"result":"less specific"}"#, "first failure; second failure"),
+        (#"{"type":"result","subtype":"success","is_error":true,"errors":["",null],"result":"  API Error: denied  "}"#, "API Error: denied"),
+        (#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429}"#, "API error (HTTP 429)"),
+        (#"{"type":"result","subtype":"error_during_execution"}"#, "error_during_execution"),
+        (#"{"type":"result","subtype":"error_max_turns","is_error":true}"#, "error_max_turns"),
+        (#"{"type":"result","subtype":"success","is_error":true}"#, "Claude Code reported an error."),
+    ])
+    func explicitProviderErrorsFailInsteadOfCompleting(fixture: (String, String)) {
+        let request = turn()
+        let events = adapter.parseOutputLine(fixture.0, turn: request)
+        #expect(events.compactMap(\.turnCompleted).isEmpty)
+        let failure = events.compactMap(\.turnFailed).first
+        #expect(failure?.context.turnID == request.turnID)
+        #expect(failure?.error == .executionFailed(reason: fixture.1))
+    }
+
+    @Test func errorResultsStillReportUsageWithoutSuccessfulCompletion() {
+        let events = adapter.parseOutputLine(
+            #"{"type":"result","subtype":"success","is_error":true,"result":"API Error","usage":{"input_tokens":7,"output_tokens":2}}"#,
+            turn: turn()
+        )
+        #expect(events.compactMap(\.usage).first?.inputTokens == 7)
+        #expect(events.compactMap(\.usage).first?.outputTokens == 2)
+        #expect(events.compactMap(\.turnFailed).count == 1)
+        #expect(events.compactMap(\.turnCompleted).isEmpty)
+    }
+
     @Test func parsesControlRequestIntoPermissionRequest() {
         let line = """
         {"type":"control_request","request_id":"req-7","payload":{"type":"permission_request","tool_name":"Bash","input":{"command":"rm -rf /tmp/x"}}}
@@ -262,6 +291,23 @@ struct ClaudeCodeAdapterTests {
         #expect(request?.toolName == "Bash")
         #expect(request?.summary.contains("rm -rf /tmp/x") == true)
         #expect(request?.input["command"]?.stringValue == "rm -rf /tmp/x")
+    }
+
+    @Test func parsesSDKPermissionRequestEnvelope() {
+        let line = #"{"type":"control_request","request_id":"sdk-7","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"/bin/echo QA"},"tool_use_id":"tool-7"}}"#
+        let request = adapter.parseOutputLine(line, turn: turn())
+            .compactMap(\.permissionRequest).first
+        #expect(request?.id == "sdk-7")
+        #expect(request?.toolName == "Bash")
+        #expect(request?.input["command"]?.stringValue == "/bin/echo QA")
+        #expect(request?.summary == "Bash: /bin/echo QA")
+    }
+
+    @Test func nonPermissionControlRequestsRemainUnhandled() {
+        let line = #"{"type":"control_request","request_id":"hook-7","request":{"subtype":"hook_callback","input":{"tool_name":"Bash"}}}"#
+        let events = adapter.parseOutputLine(line, turn: turn())
+        #expect(events.compactMap(\.permissionRequest).isEmpty)
+        #expect(events.first?.unhandled?["request_id"]?.stringValue == "hook-7")
     }
 
     @Test func unknownFramesSurfaceAsUnhandled() {
@@ -292,8 +338,10 @@ struct ClaudeCodeAdapterTests {
             from: Data(adapter.permissionResponseStdin(allow)!.utf8)
         )
         #expect(allowLine["type"]?.stringValue == "control_response")
-        #expect(allowLine["request_id"]?.stringValue == "req-1")
-        #expect(allowLine["payload"]?["behavior"]?.stringValue == "allow")
+        #expect(allowLine["response"]?["request_id"]?.stringValue == "req-1")
+        #expect(allowLine["response"]?["subtype"]?.stringValue == "success")
+        #expect(allowLine["response"]?["response"]?["behavior"]?.stringValue == "allow")
+        #expect(allowLine["payload"] == nil)
 
         let allowEdited = PermissionResponse(
             requestID: "req-1",
@@ -304,7 +352,7 @@ struct ClaudeCodeAdapterTests {
             JSONValue.self,
             from: Data(adapter.permissionResponseStdin(allowEdited)!.utf8)
         )
-        #expect(editedLine["payload"]?["updatedInput"]?["command"]?.stringValue == "ls")
+        #expect(editedLine["response"]?["response"]?["updatedInput"]?["command"]?.stringValue == "ls")
 
         let deny = PermissionResponse(
             requestID: "req-2",
@@ -315,7 +363,7 @@ struct ClaudeCodeAdapterTests {
             JSONValue.self,
             from: Data(adapter.permissionResponseStdin(deny)!.utf8)
         )
-        #expect(denyLine["payload"]?["behavior"]?.stringValue == "deny")
-        #expect(denyLine["payload"]?["message"]?.stringValue == "looks dangerous")
+        #expect(denyLine["response"]?["response"]?["behavior"]?.stringValue == "deny")
+        #expect(denyLine["response"]?["response"]?["message"]?.stringValue == "looks dangerous")
     }
 }

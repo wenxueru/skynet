@@ -7,6 +7,7 @@ struct TranscriptMessageView: View {
     let imageData: (ImageAttachment) -> Data?
     let onQuote: (String) -> Void
     @AppStorage(AppPreferenceKey.showTimestamps) private var showTimestamps = true
+    @State private var showsActions = false
 
     var body: some View {
         HStack(alignment: .top) {
@@ -29,16 +30,24 @@ struct TranscriptMessageView: View {
                     if showTimestamps || message.modelID != nil || message.usage?.totalTokens != nil {
                         MessageMetadata(message: message)
                     }
-                    Menu {
-                        messageActions
+                    Button {
+                        showsActions.toggle()
                     } label: {
                         Image(systemName: "ellipsis")
+                            .accessibilityLabel("Message actions")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
-                    .menuStyle(.borderlessButton)
+                    .buttonStyle(.plain)
                     .fixedSize()
                     .help("Message actions")
+                    .accessibilityLabel("Message actions")
+                    .popover(isPresented: $showsActions) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            messageActions
+                        }
+                        .padding(12)
+                    }
                 }
             }
             .contextMenu {
@@ -51,10 +60,14 @@ struct TranscriptMessageView: View {
     @ViewBuilder
     private var messageActions: some View {
         if !message.plainText.isEmpty {
-            Button("Copy text") { NSPasteboard.general.setString(message.plainText) }
+            Button("Copy text") {
+                NSPasteboard.general.setString(message.plainText)
+                showsActions = false
+            }
             Button("Quote in composer") {
                 onQuote(message.plainText.split(separator: "\n", omittingEmptySubsequences: false)
                     .map { "> \($0)" }.joined(separator: "\n"))
+                showsActions = false
             }
         }
     }
@@ -880,7 +893,8 @@ struct LiveTranscriptResponseView: View {
                 let seconds = Int(context.date.timeIntervalSince(model.workingSince ?? context.date))
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Working for \(max(0, seconds))s").foregroundStyle(.secondary)
+                    Text(model.liveStatusText ?? "Working for \(max(0, seconds))s")
+                        .foregroundStyle(.secondary)
                 }
             }
             if !model.liveThinking.isEmpty { ReasoningBlockView(text: model.liveThinking) }

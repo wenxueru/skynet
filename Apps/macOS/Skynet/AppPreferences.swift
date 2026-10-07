@@ -30,6 +30,8 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 }
 
 enum AppPreferenceKey {
+    static let selectedSession = "selectedSessionID"
+    static let selectedProject = "selectedProjectID"
     static let appearance = "appearance"
     static let showTimestamps = "showMessageTimestamps"
     static let expandReasoning = "expandReasoningByDefault"

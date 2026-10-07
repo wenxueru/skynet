@@ -183,10 +183,11 @@ struct CodexAdapterTests {
         let line = #"{"id":"t1","msg":{"type":"token_count","input_tokens":100,"cached_input_tokens":20,"output_tokens":50,"reasoning_output_tokens":10}}"#
         let events = adapter.parseOutputLine(line, turn: turn())
         let usage = events.compactMap(\.usage).first
-        #expect(usage?.inputTokens == 100)
+        #expect(usage?.inputTokens == 80)
         #expect(usage?.cacheReadTokens == 20)
         #expect(usage?.outputTokens == 50)
         #expect(usage?.reasoningTokens == 10)
+        #expect(usage?.totalTokens == 150)
     }
 
     @Test func parsesTaskComplete() {
@@ -250,6 +251,64 @@ struct CodexAdapterTests {
         #expect(events.compactMap(\.toolCallCompleted).first?.toolCallID == ToolCallID("agent-1"))
     }
 
+    @Test(arguments: ["completed", "failed"])
+    func parsesStandardExecCollabToolLifecycleAndAgentStates(_ status: String) throws {
+        let started = #"{"type":"item.started","item":{"id":"collab-1","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"parent","receiver_thread_ids":[],"prompt":"Read-only QA","agents_states":{},"status":"in_progress"}}"#
+        let call = try #require(adapter.parseOutputLine(started, turn: turn()).compactMap(\.toolCallStarted).first)
+        #expect(call.id == ToolCallID("collab-1"))
+        #expect(call.name == "CodexAgent")
+        #expect(call.input["tool"]?.stringValue == "spawn_agent")
+        let completed = #"{"type":"item.completed","item":{"id":"collab-1","type":"collab_tool_call","tool":"wait","sender_thread_id":"parent","receiver_thread_ids":["child"],"prompt":null,"agents_states":{"child":{"status":"completed","message":"QA_CHILD_DONE"}},"status":"\#(status)"}}"#
+        let result = try #require(adapter.parseOutputLine(completed, turn: turn()).compactMap(\.toolCallCompleted).first)
+        #expect(result.toolCallID == call.id)
+        #expect(result.isError == (status == "failed"))
+        let states = try JSONDecoder().decode(JSONValue.self, from: Data(result.content.utf8))
+        #expect(states["child"]?["message"]?.stringValue == "QA_CHILD_DONE")
+        #expect(states["child"]?["status"]?.stringValue == "completed")
+    }
+
+    @Test func parsesSubAgentActivityLifecycleForActivityTracking() {
+        let started = #"{"type":"item.completed","item":{"id":"start-event","type":"SubAgentActivity","kind":"started","agent_thread_id":"agent-thread-1"}}"#
+        var events = adapter.parseOutputLine(started, turn: turn())
+        if case .subagentStatusReported(let report) = events.first {
+            #expect(report == .init(agentThreadID: "agent-thread-1", status: .running))
+        } else { Issue.record("expected ephemeral running report") }
+        #expect(events.count == 1)
+
+        let completed = #"{"type":"item.completed","item":{"id":"complete-event","type":"SubAgentActivity","kind":"completed","agent_thread_id":"agent-thread-1"}}"#
+        events = adapter.parseOutputLine(completed, turn: turn())
+        if case .subagentStatusReported(let report) = events.first {
+            #expect(report == .init(agentThreadID: "agent-thread-1", status: .completed))
+        } else { Issue.record("expected ephemeral completed report") }
+        #expect(events.count == 1)
+    }
+
+    @Test(arguments: SubagentStatusReport.Status.allCases)
+    func reportsActualExecChildStateSeparatelyFromToolCompletion(_ status: SubagentStatusReport.Status) throws {
+        let line = #"{"type":"item.completed","item":{"id":"collab-status","type":"collab_tool_call","tool":"wait","status":"completed","agents_states":{"child":{"status":"\#(status.rawValue)","message":"child report"}}}}"#
+        let events = adapter.parseOutputLine(line, turn: turn())
+        let reports = events.compactMap { event -> SubagentStatusReport? in
+            if case .subagentStatusReported(let report) = event { return report }
+            return nil
+        }
+        #expect(reports == [SubagentStatusReport(agentThreadID: "child", status: status, message: "child report")])
+        #expect(events.compactMap(\.toolCallCompleted).count == 1)
+        #expect(events.compactMap(\.toolCallStarted).isEmpty)
+    }
+
+    @Test(arguments: ["item.started", "item.updated", "item.completed"])
+    func reportsMultipleChildrenAndPreservesUnknownStates(_ phase: String) {
+        let line = #"{"type":"\#(phase)","item":{"id":"collab-status","type":"collab_tool_call","tool":"wait","status":"completed","receiver_thread_ids":["unreported"],"agents_states":{"b":{"status":"running"},"a":{"status":"completed","message":null},"unknown":{"status":"future_state"}}}}"#
+        let events = adapter.parseOutputLine(line, turn: turn())
+        let reports = events.compactMap { event -> SubagentStatusReport? in
+            if case .subagentStatusReported(let report) = event { return report }
+            return nil
+        }
+        #expect(reports.map(\.agentThreadID) == ["a", "b"])
+        #expect(reports.map(\.status) == [.completed, .running])
+        #expect(events.compactMap(\.unhandled).count == 1)
+    }
+
     @Test func parsesAgentMessageAndReasoningItems() {
         let message = #"{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"the answer"}}"#
         var events = adapter.parseOutputLine(message, turn: turn())
@@ -270,6 +329,18 @@ struct CodexAdapterTests {
         let summary = events.compactMap(\.turnCompleted).first
         #expect(summary?.usage?.inputTokens == 7)
         #expect(summary?.stopReason == .completed)
+    }
+
+    @Test func completionDoesNotCountCachedInputTwice() throws {
+        let events = adapter.parseOutputLine(
+            #"{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":20,"cache_write_input_tokens":5,"output_tokens":10,"reasoning_output_tokens":2}}"#,
+            turn: turn()
+        )
+        let usage = try #require(events.compactMap(\.turnCompleted).first?.usage)
+        #expect(usage.inputTokens == 75)
+        #expect(usage.cacheReadTokens == 20 && usage.cacheWriteTokens == 5)
+        #expect(usage.outputTokens == 10 && usage.reasoningTokens == 2)
+        #expect(usage.totalTokens == 110)
     }
 
     @Test func unparseableAndEmptyLinesBehaveLikeClaudeAdapter() {

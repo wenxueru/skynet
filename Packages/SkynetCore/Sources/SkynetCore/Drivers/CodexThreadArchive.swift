@@ -15,10 +15,10 @@ public enum CodexThreadArchive {
             return
         }
         do {
-            try await CodexThreadMutation.perform(
+            try await CodexAppServerRPC.perform(
                 request: CodexAppServerBridge.archiveRequest(threadID: threadID, archived: archived),
                 operation: "archive",
-                threadID: threadID,
+                contextID: threadID,
                 backend: backend,
                 executable: executable,
                 environment: environment,
@@ -31,10 +31,10 @@ public enum CodexThreadArchive {
                archivedRolloutExists(threadID: threadID, environment: environment) {
                 return
             }
-            let state = try? await CodexThreadMutation.perform(
+            let state = try? await CodexAppServerRPC.perform(
                 request: CodexAppServerBridge.readThreadRequest(threadID: threadID),
                 operation: "read archive state",
-                threadID: threadID,
+                contextID: threadID,
                 backend: backend,
                 executable: executable,
                 environment: environment,
@@ -71,10 +71,10 @@ public enum CodexThreadDelete {
         timeout: Duration = .seconds(45)
     ) async throws {
         do {
-            try await CodexThreadMutation.perform(
+            try await CodexAppServerRPC.perform(
                 request: CodexAppServerBridge.deleteRequest(threadID: threadID),
                 operation: "delete",
-                threadID: threadID,
+                contextID: threadID,
                 backend: backend,
                 executable: executable,
                 environment: environment,
@@ -97,10 +97,10 @@ public enum CodexThreadDelete {
         environment: [String: String]
     ) async -> Bool {
         do {
-            try await CodexThreadMutation.perform(
+            try await CodexAppServerRPC.perform(
                 request: CodexAppServerBridge.readThreadRequest(threadID: threadID),
                 operation: "read delete state",
-                threadID: threadID,
+                contextID: threadID,
                 backend: backend,
                 executable: executable,
                 environment: environment,
@@ -108,7 +108,8 @@ public enum CodexThreadDelete {
             )
             return false
         } catch SkynetError.executionFailed(let reason) {
-            return reason == "Codex read delete state failed: thread not loaded: \(threadID)"
+            let missingThread = "Codex read delete state failed: thread not loaded: \(threadID)"
+            return reason == missingThread || reason.hasPrefix("\(missingThread) (process ")
         } catch {
             return false
         }
@@ -125,10 +126,10 @@ public enum CodexThreadName {
         environment: [String: String] = [:],
         timeout: Duration = .seconds(15)
     ) async throws {
-        try await CodexThreadMutation.perform(
+        try await CodexAppServerRPC.perform(
             request: CodexAppServerBridge.setNameRequest(threadID: threadID, name: name),
             operation: "rename",
-            threadID: threadID,
+            contextID: threadID,
             backend: backend,
             executable: executable,
             environment: environment,
@@ -146,10 +147,10 @@ public enum CodexThreadFork {
         environment: [String: String] = [:],
         timeout: Duration = .seconds(15)
     ) async throws -> String {
-        let result = try await CodexThreadMutation.perform(
+        let result = try await CodexAppServerRPC.perform(
             request: CodexAppServerBridge.forkRequest(threadID: threadID),
             operation: "fork",
-            threadID: threadID,
+            contextID: threadID,
             backend: backend,
             executable: executable,
             environment: environment,
@@ -160,80 +161,5 @@ public enum CodexThreadFork {
             throw SkynetError.executionFailed(reason: "Codex fork returned no new thread ID.")
         }
         return childID
-    }
-}
-
-private enum CodexThreadMutation {
-    @discardableResult
-    static func perform(
-        request input: Data,
-        operation: String,
-        threadID: String,
-        backend: any ExecutionBackend,
-        executable: String,
-        environment: [String: String],
-        timeout: Duration
-    ) async throws -> JSONValue {
-        let request = ExecutionRequest(
-            executable: executable,
-            arguments: ["app-server", "--stdio"],
-            environment: environment,
-            label: "codex-\(operation):\(threadID)"
-        )
-        let process = try await backend.launch(request)
-        do {
-            try await process.writeToStdin(input)
-            let result = try await waitForResult(from: process, operation: operation, timeout: timeout)
-            await process.terminate()
-            return result
-        } catch {
-            await process.terminate()
-            throw error
-        }
-    }
-
-    private static func waitForResult(
-        from process: any ExecutionProcess,
-        operation: String,
-        timeout: Duration
-    ) async throws -> JSONValue {
-        try await withThrowingTaskGroup(of: JSONValue?.self) { group in
-            group.addTask {
-                for try await line in process.stdoutLines {
-                    guard let frame = CodexAppServerBridge.decode(line),
-                          frame["id"]?.intValue == 1 else { continue }
-                    if let message = frame["error"]?["message"]?.stringValue {
-                        throw SkynetError.executionFailed(reason: "Codex \(operation) failed: \(message)")
-                    }
-                    guard let result = frame["result"] else {
-                        throw SkynetError.executionFailed(reason: "Codex \(operation) returned no result.")
-                    }
-                    return result
-                }
-                throw SkynetError.executionFailed(reason: "Codex app-server exited before \(operation).")
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw SkynetError.executionFailed(reason: "Codex \(operation) timed out.")
-            }
-            group.addTask {
-                for try await _ in process.stderrLines {}
-                return nil
-            }
-            do {
-                while let completed = try await group.next() {
-                    if let completed {
-                        await process.terminate()
-                        group.cancelAll()
-                        return completed
-                    }
-                }
-                throw SkynetError.executionFailed(reason: "Codex \(operation) returned no result.")
-            } catch {
-                await process.terminate()
-                group.cancelAll()
-                throw error
-            }
-        }
     }
 }

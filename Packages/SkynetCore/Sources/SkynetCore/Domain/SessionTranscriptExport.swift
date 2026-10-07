@@ -18,18 +18,57 @@ public enum SessionTranscriptExport {
         session: SessionRecord,
         messages: [Message],
         format: Format,
-        exportedAt: Date = Date()
+        exportedAt: Date = Date(),
+        loadBlob: ((BlobReference) throws -> Data)? = nil
     ) throws -> Data {
         switch format {
         case .json:
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            // Preserve milliseconds. FormatStyle truncates some binary date
+            // boundaries instead of rounding, so use one formatter per export.
+            encoder.dateEncodingStrategy = .custom { date, encoder in
+                var container = encoder.singleValueContainer()
+                try container.encode(formatter.string(from: date))
+            }
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             return try encoder.encode(Payload(
-                session: session, messages: messages, exportedAt: exportedAt
+                session: session,
+                messages: messagesWithInlineImages(messages, loadBlob: loadBlob),
+                exportedAt: exportedAt
             ))
         case .markdown:
             return Data(markdown(session: session, messages: messages).utf8)
+        }
+    }
+
+    /// JSON exports must remain usable outside this app's content-addressed store.
+    private static func messagesWithInlineImages(
+        _ messages: [Message],
+        loadBlob: ((BlobReference) throws -> Data)?
+    ) throws -> [Message] {
+        try messages.map { message in
+            var exported = message
+            exported.content = try message.content.map { block in
+                guard case .image(var image) = block,
+                      case .blob(let reference) = image.payload else { return block }
+                guard let loadBlob else {
+                    throw SkynetError.persistenceFailure(
+                        underlying: "JSON export needs image blob \(reference.blobID), but no blob loader is available."
+                    )
+                }
+                let bytes = try loadBlob(reference)
+                guard bytes.count == reference.byteCount,
+                      BlobStore.contentID(for: bytes) == reference.blobID.lowercased() else {
+                    throw SkynetError.persistenceFailure(
+                        underlying: "JSON export image blob \(reference.blobID) failed its size or SHA-256 check."
+                    )
+                }
+                image.payload = .inline(data: bytes, mediaType: reference.mediaType)
+                return .image(image)
+            }
+            return exported
         }
     }
 

@@ -25,8 +25,7 @@ public struct BlobStore: Sendable {
         mediaType: String,
         fileName: String? = nil
     ) throws -> BlobReference {
-        let digest = SHA256.hash(data: data)
-        let blobID = digest.map { String(format: "%02x", $0) }.joined()
+        let blobID = Self.contentID(for: data)
         let target = path(for: blobID)
         if !FileManager.default.fileExists(atPath: target.path) {
             do {
@@ -65,6 +64,13 @@ public struct BlobStore: Sendable {
 
     public func exists(_ blobID: String) -> Bool {
         FileManager.default.fileExists(atPath: path(for: blobID).path)
+    }
+
+    /// Uses the same SHA-256 key for persisted blobs and transcript matching.
+    static func contentID(for data: Data) -> String {
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     public func path(for blobID: String) -> URL {

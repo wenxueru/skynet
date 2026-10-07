@@ -14,7 +14,7 @@ import Foundation
 /// {"type":"assistant","message":{"role":"assistant","content":[…blocks…],"usage":{…}}}
 /// {"type":"user","message":{"role":"user","content":[{"type":"tool_result",…}]}}
 /// {"type":"result","subtype":"success","result":"…","usage":{…},"duration_ms":…}
-/// {"type":"control_request","request_id":"…","payload":{…permission ask…}}
+/// {"type":"control_request","request_id":"…","request":{"subtype":"can_use_tool",…}}
 /// ```
 public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
     /// The canonical built-in kind; `.claudeCodeCompatible` wrappers reuse
@@ -159,8 +159,11 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
         }
         let frame: JSONValue = [
             "type": "control_response",
-            "request_id": .string(response.requestID),
-            "payload": payload,
+            "response": [
+                "subtype": "success",
+                "request_id": .string(response.requestID),
+                "response": payload,
+            ],
         ]
         guard let data = try? JSONEncoder().encode(frame) else { return nil }
         return String(decoding: data, as: UTF8.self)
@@ -267,6 +270,22 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
 
     private func parseResult(_ frame: JSONValue, turn: AgentTurnRequest) -> [AgentEvent] {
         let subtype = frame["subtype"]?.stringValue
+        let context = TurnContext(
+            turnID: turn.turnID,
+            sessionID: turn.sessionID,
+            providerID: turn.providerID,
+            modelID: turn.modelID
+        )
+        let usage = Self.usage(from: frame["usage"])
+        var events: [AgentEvent] = usage.map { [.usageReported($0)] } ?? []
+        // API failures can use the "success" subtype. The explicit error
+        // flag is authoritative; do not advance the UI's send queue on it.
+        if frame["is_error"]?.boolValue == true || subtype == "error_during_execution" {
+            events.append(.turnFailed(TurnFailure(
+                context: context, error: .executionFailed(reason: Self.resultErrorText(frame))
+            )))
+            return events
+        }
         let stopReason: TurnSummary.StopReason
         switch subtype {
         case "success": stopReason = .completed
@@ -279,36 +298,48 @@ public struct ClaudeCodeAdapter: ProviderProtocolAdapter {
             duration = nil
         }
         let summary = TurnSummary(
-            context: TurnContext(
-                turnID: turn.turnID,
-                sessionID: turn.sessionID,
-                providerID: turn.providerID,
-                modelID: turn.modelID
-            ),
+            context: context,
             stopReason: stopReason,
             finalText: frame["result"]?.stringValue,
-            usage: Self.usage(from: frame["usage"]),
+            usage: usage,
             duration: duration
         )
-        var events: [AgentEvent] = []
-        if let usage = summary.usage {
-            events.append(.usageReported(usage))
-        }
         events.append(.turnCompleted(summary))
         return events
+    }
+
+    private static func resultErrorText(_ frame: JSONValue) -> String {
+        let errors = (frame["errors"]?.arrayValue ?? []).compactMap { value -> String? in
+            guard let text = value.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            return text
+        }
+        if !errors.isEmpty { return errors.joined(separator: "; ") }
+        if let result = frame["result"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !result.isEmpty { return result }
+        if let subtype = frame["subtype"]?.stringValue, subtype != "success", !subtype.isEmpty {
+            return subtype
+        }
+        if let status = frame["api_error_status"]?.intValue { return "API error (HTTP \(status))" }
+        return "Claude Code reported an error."
     }
 
     private func parseControlRequest(_ frame: JSONValue, turn: AgentTurnRequest) -> [AgentEvent] {
         guard let requestID = frame["request_id"]?.stringValue else {
             return [.unhandledEvent(raw: frame)]
         }
-        // Field names have drifted across CLI versions; accept the known
-        // spellings rather than pinning to one.
-        let payload = frame["payload"] ?? frame
-        let toolName =
+        // The SDK envelope also carries hooks/MCP requests, which must not
+        // become permission cards. Retain the legacy wrapper field spellings.
+        if let request = frame["request"],
+            request["subtype"]?.stringValue != "can_use_tool"
+        {
+            return [.unhandledEvent(raw: frame)]
+        }
+        let payload = frame["request"] ?? frame["payload"] ?? frame
+        guard let toolName =
             payload["tool_name"]?.stringValue
             ?? payload["tool"]?.stringValue
-            ?? "unknown-tool"
+        else { return [.unhandledEvent(raw: frame)] }
         let input =
             payload["input"]
             ?? payload["arguments"]

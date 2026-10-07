@@ -78,6 +78,9 @@ public protocol PersistenceStore: Sendable {
 /// ```
 public struct JSONDiskStore: PersistenceStore {
     public static let messagePageSize = 256 * 1024
+    // Copies of the store and independently opened stores must coordinate
+    // read/merge/replace with live appends, or an import can lose a new turn.
+    private static let transcriptWriteLock = NSRecursiveLock()
 
     /// The `skynet` subdirectory the apps should use inside an app-group
     /// container.
@@ -186,6 +189,8 @@ public struct JSONDiskStore: PersistenceStore {
     // MARK: Messages
 
     public func appendMessage(_ message: Message, to session: SessionID) throws {
+        Self.transcriptWriteLock.lock()
+        defer { Self.transcriptWriteLock.unlock() }
         let envelope = try StoreEnvelope.wrap(message)
         let data = try JSONFileIO.encoder.encode(envelope)
         try JSONFileIO.appendLine(data, to: transcriptURL(session))
@@ -287,8 +292,36 @@ public struct JSONDiskStore: PersistenceStore {
     }
 
     public func replaceMessages(_ messages: [Message], for session: SessionID) throws {
+        Self.transcriptWriteLock.lock()
+        defer { Self.transcriptWriteLock.unlock() }
         let lines = try messages.map { try JSONFileIO.encoder.encode(StoreEnvelope.wrap($0)) }
         try JSONFileIO.writeLines(lines, to: transcriptURL(session))
+    }
+
+    /// Repairs holes anywhere in cached history, preserving chronological page
+    /// order and messages appended since the provider page was requested.
+    /// Run off the UI thread; the result is the net message-count change (it
+    /// can be negative when explicit native/client aliases repair old copies).
+    @discardableResult
+    public func mergeMessages(_ imported: [Message], for session: SessionID) throws -> Int {
+        try mergeMessagesResult(imported, for: session).countDelta
+    }
+
+    public struct MessageMergeResult: Sendable {
+        public let countDelta: Int
+        /// Metadata-only rewrites also invalidate byte-offset pagination.
+        public let didRewrite: Bool
+    }
+
+    public func mergeMessagesResult(_ imported: [Message], for session: SessionID) throws -> MessageMergeResult {
+        guard !imported.isEmpty else { return .init(countDelta: 0, didRewrite: false) }
+        Self.transcriptWriteLock.lock()
+        defer { Self.transcriptWriteLock.unlock() }
+        let cached = try loadMessages(for: session)
+        let merged = TranscriptMessageMerger.merge(cached, imported)
+        guard merged != cached else { return .init(countDelta: 0, didRewrite: false) }
+        try replaceMessages(merged, for: session)
+        return .init(countDelta: merged.count - cached.count, didRewrite: true)
     }
 
     // MARK: Pairing

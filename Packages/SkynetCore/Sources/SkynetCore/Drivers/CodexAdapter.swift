@@ -169,7 +169,7 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                 .toolCallCompleted(
                     ToolCallResult(
                         toolCallID: ToolCallID(callID),
-                        content: Self.renderToolOutput(
+                        content: CodexEventParsing.renderToolOutput(
                             message["output"] ?? message["result"]
                         ),
                         isError: false
@@ -190,7 +190,7 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                 .toolCallCompleted(
                     ToolCallResult(
                         toolCallID: ToolCallID(callID),
-                        content: Self.renderToolOutput(
+                        content: CodexEventParsing.renderToolOutput(
                             message["stdout"] ?? message["stderr"]
                         ),
                         isError: !success
@@ -199,13 +199,7 @@ public struct CodexAdapter: ProviderProtocolAdapter {
             ]
 
         case "token_count":
-            let usage = TokenUsage(
-                inputTokens: message["input_tokens"]?.intValue,
-                cacheReadTokens: message["cached_input_tokens"]?.intValue,
-                outputTokens: message["output_tokens"]?.intValue,
-                reasoningTokens: message["reasoning_output_tokens"]?.intValue
-            )
-            return usage.totalTokens == nil ? [] : [.usageReported(usage)]
+            return CodexEventParsing.usage(from: message).map { [.usageReported($0)] } ?? []
 
         case "task_complete":
             let summary = TurnSummary(
@@ -269,7 +263,7 @@ public struct CodexAdapter: ProviderProtocolAdapter {
             return parseItemCompletion(item, turn: turn, context: context)
 
         case "turn.completed":
-            let usage = Self.usage(from: frame["usage"])
+            let usage = CodexEventParsing.usage(from: frame["usage"])
             return [
                 .turnCompleted(
                     TurnSummary(
@@ -326,11 +320,13 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                     )
                 )
             ]
-        case "collab_agent_tool_call", "collabAgentToolCall",
+        case "collab_tool_call", "collab_agent_tool_call", "collabAgentToolCall",
              "subagent_tool_call", "subagentToolCall":
             return [.toolCallStarted(ToolCall(
                 id: ToolCallID(itemID), name: "CodexAgent", input: item
-            ))]
+            ))] + CodexEventParsing.reportedSubagentStatusEvents(item)
+        case "subagent_activity", "subagentActivity", "SubAgentActivity":
+            return subagentActivityEvents(item)
         default:
             return [.unhandledEvent(raw: item)]
         }
@@ -378,7 +374,7 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                 .toolCallCompleted(
                     ToolCallResult(
                         toolCallID: ToolCallID(itemID),
-                        content: Self.renderToolOutput(item["output"]),
+                        content: CodexEventParsing.renderToolOutput(item["output"]),
                         isError: item["status"]?.stringValue == "failed"
                     )
                 )
@@ -388,18 +384,20 @@ public struct CodexAdapter: ProviderProtocolAdapter {
                 .toolCallCompleted(
                     ToolCallResult(
                         toolCallID: ToolCallID(itemID),
-                        content: Self.renderToolOutput(item),
+                        content: CodexEventParsing.renderToolOutput(item),
                         isError: item["status"]?.stringValue == "failed"
                     )
                 )
             ]
-        case "collab_agent_tool_call", "collabAgentToolCall",
+        case "collab_tool_call", "collab_agent_tool_call", "collabAgentToolCall",
              "subagent_tool_call", "subagentToolCall":
             return [.toolCallCompleted(ToolCallResult(
                 toolCallID: ToolCallID(itemID),
-                content: item["result"]?.stringValue ?? "",
+                content: CodexEventParsing.renderToolOutput(item["result"] ?? item["agents_states"] ?? item["agentsStates"]),
                 isError: item["status"]?.stringValue == "failed"
-            ))]
+            ))] + CodexEventParsing.reportedSubagentStatusEvents(item)
+        case "subagent_activity", "subagentActivity", "SubAgentActivity":
+            return subagentActivityEvents(item)
         case "error":
             return [
                 .turnFailed(
@@ -416,6 +414,11 @@ public struct CodexAdapter: ProviderProtocolAdapter {
         }
     }
 
+    private func subagentActivityEvents(_ item: JSONValue) -> [AgentEvent] {
+        guard let report = SubagentStatusReport.activity(item) else { return [] }
+        return [.subagentStatusReported(report)]
+    }
+
     // MARK: - Helpers
 
     private static func mcpToolName(server: JSONValue?, tool: JSONValue?) -> String {
@@ -427,32 +430,6 @@ public struct CodexAdapter: ProviderProtocolAdapter {
         default:
             return "mcp_tool"
         }
-    }
-
-    /// Tool output is usually a string; some dialects send structured JSON.
-    private static func renderToolOutput(_ value: JSONValue?) -> String {
-        switch value {
-        case .none:
-            return ""
-        case .string(let text):
-            return text
-        case .null:
-            return ""
-        default:
-            guard let data = try? JSONEncoder().encode(value) else { return "" }
-            return String(decoding: data, as: UTF8.self)
-        }
-    }
-
-    private static func usage(from value: JSONValue?) -> TokenUsage? {
-        guard let value else { return nil }
-        let usage = TokenUsage(
-            inputTokens: value["input_tokens"]?.intValue,
-            cacheReadTokens: value["cached_input_tokens"]?.intValue,
-            outputTokens: value["output_tokens"]?.intValue,
-            reasoningTokens: value["reasoning_output_tokens"]?.intValue
-        )
-        return usage.totalTokens == nil ? nil : usage
     }
 
     private static func unparseable(_ line: String) -> AgentEvent {

@@ -7,3 +7,10 @@ Packages/SkynetCore/.build/
 xcuserdata/
 history.cmt
 commit.tmp
+
+# Local agent memory, QA handoff and historical diagnostics
+/AGENTS.md
+/docs/basic_function_verification.md
+/docs/project_memory_reference.md
+/docs/status.md
+/docs/archive/
