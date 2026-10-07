@@ -17,6 +17,8 @@ public enum AgentEvent: Sendable {
     case textDelta(String)
     /// Incremental reasoning text.
     case thinkingDelta(String)
+    /// Temporary state message for work waiting on an external resource.
+    case statusUpdate(String?)
     /// A complete message (any origin) was produced. Persisted transcripts
     /// are built from these.
     case messageCompleted(Message)
@@ -25,6 +27,8 @@ public enum AgentEvent: Sendable {
     case toolCallStarted(ToolCall)
     /// A tool invocation finished.
     case toolCallCompleted(ToolCallResult)
+    /// A provider-reported child state snapshot, not a tool invocation.
+    case subagentStatusReported(SubagentStatusReport)
     /// A tool invocation needs an explicit human decision. Only sent when
     /// the provider actually supports interactive asks; the permission
     /// policy's automatic verdicts never surface as events.
@@ -38,6 +42,62 @@ public enum AgentEvent: Sendable {
     /// The turn failed. The session record is marked `.failed` but remains
     /// usable — a new turn may recover.
     case turnFailed(TurnFailure)
+}
+
+/// Last known child state explicitly reported by a provider.
+public struct SubagentStatusReport: Hashable, Sendable {
+    public enum Status: String, CaseIterable, Sendable {
+        case pendingInit = "pending_init"
+        case running, interrupted, completed, errored, shutdown
+        case notFound = "not_found"
+
+        public var isActive: Bool { self == .pendingInit || self == .running }
+        public var isError: Bool { self == .errored || self == .notFound }
+        public var label: String {
+            switch self {
+            case .pendingInit: "Starting"
+            case .running: "Running"
+            case .interrupted: "Interrupted"
+            case .completed: "Completed"
+            case .errored: "Failed"
+            case .shutdown: "Stopped"
+            case .notFound: "Unavailable"
+            }
+        }
+    }
+
+    public let agentThreadID: String
+    public let status: Status
+    public let message: String?
+    public let agentPath: String?
+
+    public init(agentThreadID: String, status: Status, message: String? = nil, agentPath: String? = nil) {
+        self.agentThreadID = agentThreadID
+        self.status = status
+        self.message = message
+        self.agentPath = agentPath
+    }
+
+    /// Custom Codex collaboration lifecycle items are independent of the
+    /// enclosing spawn/wait invocation. Unknown kinds never imply completion.
+    static func activity(_ item: JSONValue) -> SubagentStatusReport? {
+        guard ["SubAgentActivity", "subagent_activity", "subagentActivity"]
+            .contains(item["type"]?.stringValue ?? ""),
+              let id = item["agent_thread_id"]?.stringValue ?? item["agentThreadId"]?.stringValue,
+              !id.isEmpty else { return nil }
+        let status: Status
+        switch item["kind"]?.stringValue?.lowercased() {
+        case "started": status = .running
+        case "completed": status = .completed
+        case "failed": status = .errored
+        case "interrupted": status = .interrupted
+        case "shutdown": status = .shutdown
+        default: return nil
+        }
+        return .init(agentThreadID: id, status: status,
+                     message: item["message"]?.stringValue,
+                     agentPath: item["agent_path"]?.stringValue ?? item["agentPath"]?.stringValue)
+    }
 }
 
 /// Identity shared by every event of one turn.

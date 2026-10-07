@@ -66,6 +66,14 @@ public actor AgentSession {
     private var stderrBuffer: [String] = []
     private var lastExitCode: Int32?
     private var turnEnded = false
+    private var activeWriterConflictDetected = false
+    private var waitingForCodexWriter = false
+    private var codexRetryStatusActive = false
+    private var codexAppServerTurnID: String?
+    private var codexAppServerUsage = CodexAppServerBridge.UsageTracker()
+    private var codexAppServerUsageBase = TokenUsage()
+    private var persistedToolCalls: Set<ToolCallID> = []
+    private var persistedToolResults: Set<ToolCallID> = []
 
     public init(record: SessionRecord, configuration: Configuration) throws {
         try configuration.provider.validate()
@@ -101,6 +109,9 @@ public actor AgentSession {
         _ prompt: String,
         attachments: [ImageAttachment] = []
     ) throws -> AsyncThrowingStream<AgentEvent, Error> {
+        // The caller may be stopped while waiting to enter this actor. Don't
+        // persist a prompt or create an independent turn for a cancelled send.
+        try Task.checkCancellation()
         guard !isRunning else {
             throw SkynetError.executionFailed(reason: "A turn is already running in this session.")
         }
@@ -132,6 +143,7 @@ public actor AgentSession {
         // Send the *user's* view of attachments (inline or blob) to the
         // transcript, but inline bytes to the CLI.
         let userMessage = Message(
+            id: MessageID(context.turnID),
             origin: .user,
             content: [.text(trimmedPrompt)] + attachments.map { ContentBlock.image($0) },
             createdAt: configuration.now(),
@@ -172,9 +184,16 @@ public actor AgentSession {
 
         isRunning = true
         turnEnded = false
+        persistedToolCalls = []
+        persistedToolResults = []
+        waitingForCodexWriter = false
+        codexRetryStatusActive = false
         lastExitCode = nil
         stderrBuffer = []
         currentTurnContext = context
+        codexAppServerTurnID = nil
+        codexAppServerUsage = .init()
+        codexAppServerUsageBase = record.totalUsage
 
         let task = Task { [weak self] in
             guard let self else { return }
@@ -186,8 +205,11 @@ public actor AgentSession {
 
     /// Cancels the running turn, if any. Idempotent.
     public func cancelActiveTurn() async {
-        currentTask?.cancel()
-        await currentProcess?.terminate()
+        let task = currentTask
+        let process = currentProcess
+        task?.cancel()
+        await process?.terminate()
+        await task?.value
     }
 
     // MARK: - Turn execution
@@ -230,68 +252,108 @@ public actor AgentSession {
                 ], at: 1)
             }
             let arguments = configuration.provider.defaultArguments + adapterArguments
+            // `codex exec --cd` handles the project directory itself. Keeping
+            // the Node CLI wrapper in its inherited cwd also avoids a slow or
+            // blocked getcwd before the native Codex process even launches.
+            let workingDirectory = configuration.provider.kind == .codex
+                && !usesCodexAppServer && configuration.backend.kind == .local
+                ? nil : turn.workingDirectory
             let request = ExecutionRequest(
                 executable: configuration.provider.resolvedExecutableName
                     ?? configuration.provider.kind.defaultExecutableName,
                 arguments: arguments,
                 environment: configuration.provider.environment,
-                workingDirectory: turn.workingDirectory,
+                workingDirectory: workingDirectory,
+                stdinMode: configuration.provider.kind == .codex && !usesCodexAppServer
+                    ? .closed : .writable,
                 label: "\(configuration.provider.id.rawValue):\(record.id.description.prefix(8))"
             )
-            let process = try await configuration.backend.launch(request)
-            currentProcess = process
+            var retryAttempt = 0
+            while true {
+                if Task.isCancelled {
+                    await completeTurn(
+                        context: context,
+                        stopReason: .cancelled,
+                        finalText: nil,
+                        usage: nil,
+                        duration: nil,
+                        continuation: continuation
+                    )
+                    break
+                }
+                stderrBuffer = []
+                lastExitCode = nil
+                activeWriterConflictDetected = false
+                let process = try await configuration.backend.launch(request)
+                currentProcess = process
 
-            let launchInput = usesCodexAppServer
-                ? try CodexAppServerBridge.handshake(resumeToken: turn.resumeToken)
-                : try adapter.launchStdin(provider: configuration.provider, turn: turn)
-            if let stdinData = launchInput {
-                try await process.writeToStdin(stdinData)
-            }
+                let launchInput = usesCodexAppServer
+                    ? try CodexAppServerBridge.initialization()
+                    : try adapter.launchStdin(provider: configuration.provider, turn: turn)
+                if let stdinData = launchInput {
+                    try await process.writeToStdin(stdinData)
+                }
 
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask { [weak self, process, turn, context, continuation] in
-                    guard let self else { return }
-                    for try await line in process.stdoutLines {
-                        if Task.isCancelled { break }
-                        if usesCodexAppServer {
-                            await self.handleCodexAppServerLine(
-                                line, turn: turn, context: context, continuation: continuation
-                            )
-                        } else {
-                            await self.handleOutputLine(
-                                line, turn: turn, context: context, continuation: continuation
-                            )
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask { [weak self, process, turn, context, continuation] in
+                        guard let self else { return }
+                        for try await line in process.stdoutLines {
+                            if Task.isCancelled { break }
+                            if usesCodexAppServer {
+                                await self.handleCodexAppServerLine(
+                                    line, turn: turn, context: context, process: process,
+                                    continuation: continuation
+                                )
+                            } else {
+                                await self.handleOutputLine(
+                                    line, turn: turn, context: context, continuation: continuation
+                                )
+                            }
                         }
                     }
-                }
-                group.addTask { [weak self, process] in
-                    guard let self else { return }
-                    for try await line in process.stderrLines {
-                        await self.collectStderrLine(line)
+                    group.addTask { [weak self, process] in
+                        guard let self else { return }
+                        for try await line in process.stderrLines {
+                            await self.collectStderrLine(line, continuation: continuation)
+                        }
                     }
+                    group.addTask { [weak self, process] in
+                        let code = try await process.waitUntilExit()
+                        await self?.recordExit(code)
+                    }
+                    try await group.waitForAll()
                 }
-                group.addTask { [weak self, process] in
-                    let code = try await process.waitUntilExit()
-                    await self?.recordExit(code)
-                }
-                try await group.waitForAll()
-            }
 
-            if Task.isCancelled {
-                await completeTurn(
-                    context: context,
-                    stopReason: .cancelled,
-                    finalText: nil,
-                    usage: nil,
-                    duration: nil,
-                    continuation: continuation
-                )
-            } else if !turnEnded {
+                if Task.isCancelled {
+                    await completeTurn(
+                        context: context,
+                        stopReason: .cancelled,
+                        finalText: nil,
+                        usage: nil,
+                        duration: nil,
+                        continuation: continuation
+                    )
+                    break
+                }
+
+                let stderr = stderrBuffer.joined(separator: "\n")
+                let stderrTail = stderr.count > 2000 ? String(stderr.suffix(2000)) : stderr
+                let hasActiveWriterConflict = activeWriterConflictDetected
+                    || (lastExitCode != 0 && isCodexActiveWriterConflict(stderr: stderrTail))
+                if hasActiveWriterConflict {
+                    beginWaitingForCodexWriter(continuation)
+                    currentProcess = nil
+                    let delayMilliseconds = min(500 * (1 << min(retryAttempt, 4)), 5_000)
+                    retryAttempt += 1
+                    try await Task.sleep(for: .milliseconds(delayMilliseconds))
+                    continue
+                }
+
+                guard !turnEnded else { break }
+
                 if let code = lastExitCode, code != 0 {
-                    let stderr = stderrBuffer.joined(separator: "\n")
-                    let tail = stderr.count > 2000 ? String(stderr.suffix(2000)) : stderr
                     await failTurn(
-                        SkynetError.agentExited(code: code, stderr: tail),
+                        exitError(code: code, stderr: stderrTail),
                         context: context,
                         continuation: continuation
                     )
@@ -313,6 +375,7 @@ public actor AgentSession {
                         continuation: continuation
                     )
                 }
+                break
             }
         } catch is CancellationError {
             await completeTurn(
@@ -332,6 +395,9 @@ public actor AgentSession {
                 continuation: continuation
             )
         }
+        // Keep this turn alive until its process termination finishes, even
+        // if cancelling the output streams lets the task group finish early.
+        if Task.isCancelled { await currentProcess?.terminate() }
     }
 
     // MARK: - Event handling
@@ -340,14 +406,42 @@ public actor AgentSession {
         _ line: String,
         turn: AgentTurnRequest,
         context: TurnContext,
+        process: any ExecutionProcess,
         continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
     ) async {
         guard let frame = CodexAppServerBridge.decode(line) else { return }
-        if frame["id"]?.intValue == 1 {
+        // Server requests have their own ID namespace; only responses match our RPC IDs.
+        if frame["method"] == nil, frame["id"]?.intValue == 0 {
+            if let detail = frame["error"]?["message"]?.stringValue {
+                await failTurn(
+                    .executionFailed(reason: "Codex app-server initialization failed: \(detail)"),
+                    context: context,
+                    continuation: continuation
+                )
+                await process.terminate()
+                return
+            }
+            do {
+                try await process.writeToStdin(CodexAppServerBridge.initializedNotification())
+                try await process.writeToStdin(
+                    CodexAppServerBridge.threadRequest(resumeToken: turn.resumeToken)
+                )
+            } catch {
+                await failTurn(
+                    .executionFailed(reason: "Starting the Codex session failed: \(error)"),
+                    context: context,
+                    continuation: continuation
+                )
+                await process.terminate()
+            }
+            return
+        }
+        if frame["method"] == nil, frame["id"]?.intValue == 1 {
             if let threadID = frame["result"]?["thread"]?["id"]?.stringValue {
+                clearWriterWaitStatus(continuation)
                 await processEvent(.sessionTokenReceived(providerSessionID: threadID), continuation: continuation)
                 do {
-                    try await currentProcess?.writeToStdin(
+                    try await process.writeToStdin(
                         CodexAppServerBridge.startTurn(
                             threadID: threadID,
                             turn: turn,
@@ -360,21 +454,43 @@ public actor AgentSession {
                         context: context,
                         continuation: continuation
                     )
-                    await currentProcess?.terminate()
+                    await process.terminate()
                 }
             } else {
-                await failTurn(
-                    .executionFailed(reason: frame["error"]?["message"]?.stringValue ?? "Codex thread start failed"),
-                    context: context,
-                    continuation: continuation
-                )
-                await currentProcess?.terminate()
+                let detail = frame["error"]?["message"]?.stringValue ?? "Codex thread start failed"
+                if isCodexActiveWriterConflict(stderr: detail) {
+                    await noteCodexWriterConflict(continuation)
+                } else {
+                    await failTurn(
+                        .executionFailed(reason: detail),
+                        context: context,
+                        continuation: continuation
+                    )
+                }
+                await process.terminate()
             }
             return
         }
-        if frame["id"]?.intValue == 2, let error = frame["error"]?["message"]?.stringValue {
-            await failTurn(.executionFailed(reason: error), context: context, continuation: continuation)
-            await currentProcess?.terminate()
+        if frame["method"] == nil, frame["id"]?.intValue == 2,
+           let error = frame["error"]?["message"]?.stringValue {
+            if isCodexActiveWriterConflict(stderr: error) {
+                await noteCodexWriterConflict(continuation)
+            } else {
+                await failTurn(.executionFailed(reason: error), context: context, continuation: continuation)
+            }
+            await process.terminate()
+            return
+        }
+        if frame["method"] == nil, frame["id"]?.intValue == 2 {
+            codexAppServerTurnID = frame["result"]?["turn"]?["id"]?.stringValue
+            return
+        }
+        if frame["method"]?.stringValue == "thread/tokenUsage/updated" {
+            guard let codexAppServerTurnID,
+                  frame["params"]?["threadId"]?.stringValue == record.providerResumeToken,
+                  frame["params"]?["turnId"]?.stringValue == codexAppServerTurnID,
+                  let usage = codexAppServerUsage.observe(frame) else { return }
+            await processEvent(.usageReported(usage), continuation: continuation)
             return
         }
         if let id = frame["id"], frame["method"] != nil {
@@ -385,17 +501,29 @@ public actor AgentSession {
                 let answer = await configuration.permissionResponder?.decide(request)
                     ?? PermissionResponse(requestID: request.id, decision: .deny)
                 if let data = try? CodexAppServerBridge.approvalResponse(frame: frame, decision: answer.decision) {
-                    try? await currentProcess?.writeToStdin(data)
+                    try? await process.writeToStdin(data)
                 }
             } else if let data = try? CodexAppServerBridge.unsupportedResponse(id: id) {
-                try? await currentProcess?.writeToStdin(data)
+                try? await process.writeToStdin(data)
             }
             return
         }
         for event in CodexAppServerBridge.events(frame, turn: turn) {
+            if case .turnFailed(let failure) = event,
+               isCodexActiveWriterConflict(stderr: failure.error.localizedDescription) {
+                await noteCodexWriterConflict(continuation)
+                return
+            }
+            if case .statusUpdate(let text) = event {
+                codexRetryStatusActive = text != nil
+            } else if codexRetryStatusActive {
+                codexRetryStatusActive = false
+                continuation.yield(.statusUpdate(nil))
+            }
+            clearWriterWaitStatus(continuation)
             await processEvent(event, continuation: continuation)
-            if case .turnCompleted = event { await currentProcess?.terminate() }
-            if case .turnFailed = event { await currentProcess?.terminate() }
+            if case .turnCompleted = event { await process.terminate() }
+            if case .turnFailed = event { await process.terminate() }
         }
     }
 
@@ -405,7 +533,18 @@ public actor AgentSession {
         context: TurnContext,
         continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
     ) async {
-        for event in adapter.parseOutputLine(line, turn: turn) {
+        if isCodexActiveWriterConflict(stderr: line) {
+            await noteCodexWriterConflict(continuation)
+            return
+        }
+        let events = adapter.parseOutputLine(line, turn: turn)
+        for event in events {
+            if case .turnFailed(let failure) = event,
+               isCodexActiveWriterConflict(stderr: failure.error.localizedDescription) {
+                await noteCodexWriterConflict(continuation)
+                return
+            }
+            clearWriterWaitStatus(continuation)
             if case .permissionRequested = event {
                 // Permission events flow through the responder path, which
                 // decides whether they surface at all.
@@ -416,6 +555,14 @@ public actor AgentSession {
         }
     }
 
+    private func clearWriterWaitStatus(
+        _ continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
+    ) {
+        guard waitingForCodexWriter else { return }
+        waitingForCodexWriter = false
+        continuation.yield(.statusUpdate(nil))
+    }
+
     private func processEvent(
         _ event: AgentEvent,
         continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
@@ -423,11 +570,35 @@ public actor AgentSession {
         do {
             switch event {
             case .messageCompleted(let message):
-                messages.append(message)
-                record.messageCount += 1
-                try configuration.store?.appendMessage(message, to: record.id)
-                record.updatedAt = configuration.now()
-                try configuration.store?.saveSession(record)
+                try persistTranscriptMessage(message)
+
+            // Claude emits complete messages containing its tool blocks already.
+            // Codex's exec and app-server transports emit only tool lifecycle
+            // events, including repeated item.updated notifications.
+            case .toolCallStarted(let call) where configuration.provider.kind == .codex:
+                if !persistedToolCalls.contains(call.id) {
+                    let message = Message(
+                        origin: .agent, content: [.toolCall(call)],
+                        createdAt: configuration.now(), modelID: record.modelID,
+                        providerID: record.providerID
+                    )
+                    try persistTranscriptMessage(message)
+                    persistedToolCalls.insert(call.id)
+                    continuation.yield(.messageCompleted(message))
+                }
+
+            case .toolCallCompleted(let result) where configuration.provider.kind == .codex:
+                if !persistedToolResults.contains(result.toolCallID) {
+                    let message = Message(
+                        origin: .toolResult,
+                        content: [.toolResult(toolCallID: result.toolCallID,
+                                              content: result.content, isError: result.isError)],
+                        createdAt: configuration.now(), providerID: record.providerID
+                    )
+                    try persistTranscriptMessage(message)
+                    persistedToolResults.insert(result.toolCallID)
+                    continuation.yield(.messageCompleted(message))
+                }
 
             case .sessionTokenReceived(let token):
                 if let forkSourceToken = record.forkSourceToken, token == forkSourceToken {
@@ -438,11 +609,25 @@ public actor AgentSession {
                 record.updatedAt = configuration.now()
                 try configuration.store?.saveSession(record)
 
+            case .usageReported(let usage) where codexAppServerTurnID != nil:
+                // The tracker emits a turn-so-far snapshot, not an increment.
+                // Persist each billed response even if the turn fails/stops.
+                record.totalUsage = codexAppServerUsageBase + usage
+                record.updatedAt = configuration.now()
+                try configuration.store?.saveSession(record)
+
             case .turnCompleted(let summary):
                 turnEnded = true
                 record.status = .idle
                 if let usage = summary.usage {
-                    record.totalUsage += usage
+                    if configuration.provider.kind == .codex, codexAppServerTurnID == nil {
+                        // `codex exec` turn.completed reports the thread's
+                        // cumulative total, including resumed history. Replacing
+                        // also reconciles totals inflated by older app versions.
+                        record.totalUsage = usage
+                    } else {
+                        record.totalUsage += usage
+                    }
                 }
                 record.updatedAt = configuration.now()
                 try configuration.store?.saveSession(record)
@@ -474,12 +659,20 @@ public actor AgentSession {
         continuation.yield(event)
     }
 
+    private func persistTranscriptMessage(_ message: Message) throws {
+        try configuration.store?.appendMessage(message, to: record.id)
+        messages.append(message)
+        record.messageCount += 1
+        record.updatedAt = configuration.now()
+        try configuration.store?.saveSession(record)
+    }
+
     private func handlePermissionEvent(
         _ event: AgentEvent,
         continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
     ) async {
         guard case .permissionRequested(let request) = event else { return }
-        let response: PermissionResponse
+        var response: PermissionResponse
         switch sessionPermissions.evaluate(
             toolName: request.toolName,
             primaryArgument: request.primaryArgument
@@ -512,6 +705,11 @@ public actor AgentSession {
                 )
             }
             response = answer
+        }
+        // Claude's allow response requires the effective tool input. A nil
+        // UI/policy override means preserve the exact original, not omit it.
+        if response.decision != .deny && response.updatedInput == nil {
+            response.updatedInput = request.input
         }
         if let line = adapter.permissionResponseStdin(response) {
             try? await currentProcess?.writeToStdin(Data((line + "\n").utf8))
@@ -609,14 +807,63 @@ public actor AgentSession {
         }
     }
 
-    private func collectStderrLine(_ line: String) {
+    private func collectStderrLine(
+        _ line: String,
+        continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
+    ) async {
         stderrBuffer.append(line)
         if stderrBuffer.count > 200 {
             stderrBuffer.removeFirst(stderrBuffer.count - 200)
         }
+        if isCodexActiveWriterConflict(stderr: line) {
+            await noteCodexWriterConflict(continuation)
+        }
+    }
+
+    private func noteCodexWriterConflict(
+        _ continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
+    ) async {
+        activeWriterConflictDetected = true
+        beginWaitingForCodexWriter(continuation)
+        await currentProcess?.terminate()
+    }
+
+    private func beginWaitingForCodexWriter(
+        _ continuation: AsyncThrowingStream<AgentEvent, Error>.Continuation
+    ) {
+        guard !waitingForCodexWriter else { return }
+        waitingForCodexWriter = true
+        continuation.yield(.statusUpdate("Waiting for this Codex session to finish…"))
     }
 
     private func recordExit(_ code: Int32) {
         lastExitCode = code
+    }
+
+    private func exitError(code: Int32, stderr: String) -> SkynetError {
+        guard isCodexActiveWriterConflict(stderr: stderr) else {
+            return .agentExited(code: code, stderr: stderr)
+        }
+        return .executionFailed(
+            reason: "This Codex session is active in another process. Wait for that turn to finish, then retry from Skynet."
+        )
+    }
+
+    private func isCodexActiveWriterConflict(stderr: String) -> Bool {
+        guard configuration.provider.kind == .codex else { return false }
+
+        let message = stderr.lowercased()
+        let identifiesThreadStore = message.contains("thread-store") || message.contains("thread store")
+        let identifiesThread = message.contains("thread")
+        let identifiesWriterConflict = message.contains("active writer")
+            || (message.contains("writer") && message.contains("active"))
+
+        return (identifiesThreadStore && identifiesWriterConflict)
+            || (identifiesThread && (
+                message.contains("already active")
+                    || message.contains("active turn")
+                    || message.contains("thread is locked")
+                    || message.contains("thread locked")
+            ))
     }
 }

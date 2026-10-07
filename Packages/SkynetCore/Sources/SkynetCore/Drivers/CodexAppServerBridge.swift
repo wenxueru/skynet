@@ -1,25 +1,73 @@
 import Foundation
 
-/// The small JSON-RPC surface needed for a human-reviewed Codex turn.
-/// Automatic review and legacy modes continue to use `codex exec`.
+/// The small JSON-RPC surface needed for human-reviewed or image Codex turns.
+/// Text-only automatic review and legacy modes continue to use `codex exec`.
 enum CodexAppServerBridge {
+    /// `last` is one model response, not the whole turn. Use successive thread
+    /// totals to include later responses; replayed/older snapshots add nothing.
+    struct UsageTracker {
+        private var previousTotal: TokenUsage?
+        private var turnUsage = TokenUsage()
+
+        mutating func observe(_ frame: JSONValue) -> TokenUsage? {
+            guard let total = Self.decode(frame["params"]?["tokenUsage"]?["total"]),
+                  let last = Self.decode(frame["params"]?["tokenUsage"]?["last"]) else { return nil }
+            let delta: TokenUsage
+            if let previousTotal {
+                let old = Self.parts(previousTotal), new = Self.parts(total)
+                guard zip(old, new).allSatisfy({ $0 <= $1 }), old != new else { return nil }
+                delta = TokenUsage(
+                    inputTokens: new[0] - old[0], cacheReadTokens: new[1] - old[1],
+                    cacheWriteTokens: new[2] - old[2], outputTokens: new[3] - old[3],
+                    reasoningTokens: new[4] - old[4]
+                )
+            } else { delta = last }
+            previousTotal = total
+            turnUsage += delta
+            return turnUsage
+        }
+
+        private static func parts(_ usage: TokenUsage) -> [Int] {
+            [usage.inputTokens, usage.cacheReadTokens, usage.cacheWriteTokens,
+             usage.outputTokens, usage.reasoningTokens].map { $0 ?? 0 }
+        }
+
+        private static func decode(_ value: JSONValue?) -> TokenUsage? {
+            guard let input = value?["inputTokens"]?.intValue,
+                  let cached = value?["cachedInputTokens"]?.intValue,
+                  let output = value?["outputTokens"]?.intValue,
+                  let reasoning = value?["reasoningOutputTokens"]?.intValue else { return nil }
+            let written = value?["cacheWriteInputTokens"]?.intValue ?? 0
+            guard [input, cached, output, reasoning, written].allSatisfy({ $0 >= 0 }) else { return nil }
+            return CodexEventParsing.usage(from: [
+                "input_tokens": .number(String(input)), "cached_input_tokens": .number(String(cached)),
+                "cache_write_input_tokens": .number(String(written)), "output_tokens": .number(String(output)),
+                "reasoning_output_tokens": .number(String(reasoning)),
+            ])
+        }
+    }
+
     static func initialization() throws -> Data {
         try encode([
             "id": 0,
             "method": "initialize",
             "params": ["clientInfo": ["name": "skynet", "title": "Skynet", "version": "1.0"]],
-        ]) + encode(["method": "initialized", "params": [:]])
+        ])
     }
 
-    static func handshake(resumeToken: String?) throws -> Data {
+    static func initializedNotification() throws -> Data {
+        try encode(["method": "initialized", "params": [:]])
+    }
+
+    static func threadRequest(resumeToken: String?) throws -> Data {
         let threadRequest: JSONValue = resumeToken.map { token in
             ["id": 1, "method": "thread/resume", "params": ["threadId": .string(token)]]
         } ?? ["id": 1, "method": "thread/start", "params": [:]]
-        return try initialization() + encode(threadRequest)
+        return try encode(threadRequest)
     }
 
     static func archiveRequest(threadID: String, archived: Bool) throws -> Data {
-        try initialization() + encode([
+        try encode([
             "id": 1,
             "method": .string(archived ? "thread/archive" : "thread/unarchive"),
             "params": ["threadId": .string(threadID)],
@@ -27,7 +75,7 @@ enum CodexAppServerBridge {
     }
 
     static func readThreadRequest(threadID: String) throws -> Data {
-        try initialization() + encode([
+        try encode([
             "id": 1,
             "method": "thread/read",
             "params": ["threadId": .string(threadID), "includeTurns": false],
@@ -35,7 +83,7 @@ enum CodexAppServerBridge {
     }
 
     static func deleteRequest(threadID: String) throws -> Data {
-        try initialization() + encode([
+        try encode([
             "id": 1,
             "method": "thread/delete",
             "params": ["threadId": .string(threadID)],
@@ -43,19 +91,25 @@ enum CodexAppServerBridge {
     }
 
     static func setNameRequest(threadID: String, name: String) throws -> Data {
-        try initialization() + encode([
+        try encode([
             "id": 1,
-            "method": "thread/setName",
+            "method": "thread/name/set",
             "params": ["threadId": .string(threadID), "name": .string(name)],
         ])
     }
 
     static func forkRequest(threadID: String) throws -> Data {
-        try initialization() + encode([
+        try encode([
             "id": 1,
             "method": "thread/fork",
             "params": ["threadId": .string(threadID)],
         ])
+    }
+
+    static func modelListRequest(cursor: String?) throws -> Data {
+        var params: [String: JSONValue] = ["limit": 100, "includeHidden": false]
+        if let cursor { params["cursor"] = .string(cursor) }
+        return try encode(["id": 1, "method": "model/list", "params": .object(params)])
     }
 
     static func startTurn(
@@ -80,11 +134,13 @@ enum CodexAppServerBridge {
         }
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
+            "clientUserMessageId": .string(turn.turnID.uuidString),
             "input": .array(input),
             "approvalPolicy": "on-request",
+            // Resumed threads can retain auto_review from an earlier turn.
+            "approvalsReviewer": approvalMode == .automatic ? "auto_review" : "user",
             "sandboxPolicy": ["type": "workspaceWrite"],
         ]
-        if approvalMode == .automatic { params["approvalsReviewer"] = "auto_review" }
         if let cwd = turn.workingDirectory { params["cwd"] = .string(cwd) }
         if let model = turn.modelID { params["model"] = .string(model.rawValue) }
         if let effort = turn.effort { params["effort"] = .string(effort.rawValue) }
@@ -170,7 +226,7 @@ enum CodexAppServerBridge {
             return params?["delta"]?.stringValue.map { [.textDelta($0)] } ?? []
         case "item/reasoning/summaryTextDelta":
             return params?["delta"]?.stringValue.map { [.thinkingDelta($0)] } ?? []
-        case "item/started":
+        case "item/started", "item/updated":
             guard let item = params?["item"], let id = item["id"]?.stringValue else { return [] }
             switch item["type"]?.stringValue {
             case "commandExecution":
@@ -186,11 +242,16 @@ enum CodexAppServerBridge {
             case "collabAgentToolCall", "subagentToolCall":
                 return [.toolCallStarted(ToolCall(
                     id: ToolCallID(id), name: "CodexAgent", input: item
-                ))]
+                ))] + CodexEventParsing.reportedSubagentStatusEvents(item)
+            case "subagentActivity", "SubAgentActivity", "subagent_activity":
+                return subagentActivityEvents(item)
             default: return []
             }
         case "item/completed":
             guard let item = params?["item"] else { return [] }
+            if isSubagentActivity(item) {
+                return subagentActivityEvents(item)
+            }
             if item["type"]?.stringValue == "agentMessage",
                let text = item["text"]?.stringValue, !text.isEmpty {
                 return [.messageCompleted(Message(
@@ -203,17 +264,22 @@ enum CodexAppServerBridge {
             if let id = item["id"]?.stringValue,
                ["commandExecution", "fileChange", "collabAgentToolCall", "subagentToolCall"]
                 .contains(item["type"]?.stringValue ?? "") {
-                return [.toolCallCompleted(ToolCallResult(
+                let completed = AgentEvent.toolCallCompleted(ToolCallResult(
                     toolCallID: ToolCallID(id),
-                    content: item["aggregatedOutput"]?.stringValue ?? "",
+                    content: CodexEventParsing.renderToolOutput(item["aggregatedOutput"] ?? item["agentsStates"]),
                     isError: item["status"]?.stringValue != "completed"
-                ))]
+                ))
+                let isCollaboration = ["collabAgentToolCall", "subagentToolCall"]
+                    .contains(item["type"]?.stringValue ?? "")
+                return [completed] + (isCollaboration ? CodexEventParsing.reportedSubagentStatusEvents(item) : [])
             }
             return []
         case "turn/completed":
             let status = params?["turn"]?["status"]?.stringValue
-            if status == "failed" {
-                let detail = params?["turn"]?["error"]?["message"]?.stringValue ?? "Codex turn failed"
+            guard status == "completed" || status == "interrupted" else {
+                let detail = params?["turn"]?["error"]?["message"]?.stringValue
+                    ?? (status == "failed" ? "Codex turn failed"
+                        : "Codex returned an invalid completion status: \(status ?? "missing")")
                 return [.turnFailed(TurnFailure(context: context, error: .executionFailed(reason: detail)))]
             }
             return [.turnCompleted(TurnSummary(
@@ -222,13 +288,42 @@ enum CodexAppServerBridge {
             ))]
         case "error":
             let detail = params?["error"]?["message"]?.stringValue ?? "Codex reported an error"
+            if params?["willRetry"]?.boolValue == true { return [.statusUpdate(detail)] }
             return [.turnFailed(TurnFailure(context: context, error: .executionFailed(reason: detail)))]
         default:
             return []
         }
     }
 
-    private static func encode(_ value: JSONValue) throws -> Data {
+    private static func isSubagentActivity(_ item: JSONValue) -> Bool {
+        ["subagentActivity", "SubAgentActivity", "subagent_activity"]
+            .contains(item["type"]?.stringValue ?? "")
+    }
+
+    private static func subagentActivityEvents(_ item: JSONValue) -> [AgentEvent] {
+        guard let agentID = item["agentThreadId"]?.stringValue
+                ?? item["agent_thread_id"]?.stringValue else { return [] }
+        let toolCallID = ToolCallID(agentID)
+
+        switch item["kind"]?.stringValue?.lowercased() {
+        case "started":
+            return [.toolCallStarted(ToolCall(
+                id: toolCallID, name: "Subagent", input: item
+            ))]
+        case "completed":
+            return [.toolCallCompleted(ToolCallResult(
+                toolCallID: toolCallID, content: "", isError: false
+            ))]
+        case "failed":
+            return [.toolCallCompleted(ToolCallResult(
+                toolCallID: toolCallID, content: "", isError: true
+            ))]
+        default:
+            return []
+        }
+    }
+
+    static func encode(_ value: JSONValue) throws -> Data {
         try JSONEncoder().encode(value) + Data([0x0A])
     }
 }

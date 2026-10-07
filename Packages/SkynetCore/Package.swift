@@ -4,8 +4,9 @@ import PackageDescription
 /// SkynetCore — shared core for the Skynet macOS and iOS apps.
 ///
 /// The package is intentionally dependency-free: everything it needs comes from
-/// Foundation. It builds for macOS 13+ and iOS 16+ so a single code base can be
-/// linked into both apps (see docs/ARCHITECTURE.md for the process boundaries
+/// Foundation and optional system ImageIO for image metadata. It builds for
+/// macOS 13+ and iOS 16+ so a single code base can be
+/// linked into both apps (see docs/architecture.md for the process boundaries
 /// that separate the two platforms).
 let package = Package(
     name: "SkynetCore",

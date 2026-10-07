@@ -8,14 +8,32 @@ packages:
   SkynetCore:
     path: Packages/SkynetCore
 targets:
+  SkynetPTYLauncher:
+    type: tool
+    platform: macOS
+    sources:
+      - Apps/macOS/SkynetPTYLauncher
   SkynetMac:
     type: application
     platform: macOS
     sources:
       - Apps/macOS/Skynet
     dependencies:
+      - target: SkynetPTYLauncher
+        link: false
+        embed: false
       - package: SkynetCore
         product: SkynetCore
+    postBuildScripts:
+      - name: Bundle terminal launcher
+        script: |
+          set -eu
+          mkdir -p "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          cp "${BUILT_PRODUCTS_DIR}/SkynetPTYLauncher" "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/SkynetPTYLauncher"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/SkynetPTYLauncher
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/SkynetPTYLauncher
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.skynetresearch.skynet.mac

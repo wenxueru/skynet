@@ -2,6 +2,41 @@ import AppKit
 import SkynetCore
 import SwiftUI
 
+/// Hidden-titlebar windows leave a native strip above SwiftUI's detail toolbar.
+/// Handle only that strip; content controls keep their normal double-clicks.
+private struct TitlebarDoubleClickObserver: NSViewRepresentable {
+    func makeNSView(context: Context) -> ObserverView { ObserverView() }
+    func updateNSView(_ view: ObserverView, context: Context) {}
+
+    final class ObserverView: NSView {
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                guard let window = self?.window, event.window === window,
+                      event.clickCount == 2,
+                      event.locationInWindow.y > window.contentLayoutRect.maxY else { return event }
+                for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                    if let button = window.standardWindowButton(kind),
+                       button.convert(button.bounds, to: nil).insetBy(dx: -4, dy: -4)
+                        .contains(event.locationInWindow) { return event }
+                }
+                window.performZoom(nil)
+                // Consuming the second click prevents the native titlebar from
+                // also zooming and immediately undoing this action.
+                return nil
+            }
+        }
+
+        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    }
+}
+
 struct ContentView: View {
     @Bindable var model: AppModel
     @State private var isImporterPresented = false
@@ -28,6 +63,18 @@ struct ContentView: View {
                     systemImage: "bubble.left.and.text.bubble.right",
                     description: Text("Choose a project, then create a Codex or Claude Code session.")
                 )
+            }
+        }
+        .background(TitlebarDoubleClickObserver())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let warning = model.connectivityWarning {
+                Label(warning, systemImage: "wifi.exclamationmark")
+                    .font(.callout)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.orange.opacity(0.12))
+                    .accessibilityLabel(warning)
             }
         }
         .alert("Skynet", isPresented: Binding(
@@ -221,14 +268,14 @@ struct ContentView: View {
                             action: { expansion.toggle(machine.id) }
                         ) {
                             Circle()
-                                .fill(model.machineErrors[machine.id] == nil ? .green : .secondary)
+                                .fill(machineStatusColor(machine))
                                 .frame(width: 8, height: 8)
                             Image(systemName: machine.sshAlias == nil ? "desktopcomputer" : "server.rack")
                                 .foregroundStyle(.secondary)
                                 .frame(width: 18)
                             Text(machine.name).fontWeight(.semibold)
                         }
-                        .help(model.machineErrors[machine.id] ?? machine.name)
+                        .help(machineStatusDescription(machine))
 
                         if expansion.contains(machine.id) {
                             ForEach(projectsByMachine[machine.id, default: []]) { project in
@@ -396,6 +443,26 @@ struct ContentView: View {
             .flatMap { model.filteredSessions(for: $0) }
             .filter { $0.pinMode == .global }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func machineStatusColor(_ machine: DiscoveredMachine) -> Color {
+        guard machine.sshAlias != nil else { return .green }
+        switch model.connectivity.hosts[machine.id] ?? .checking {
+        case .reachable: return .green
+        case .checking: return .secondary
+        case .unavailable: return .orange
+        }
+    }
+
+    private func machineStatusDescription(_ machine: DiscoveredMachine) -> String {
+        guard machine.sshAlias != nil else {
+            return model.machineErrors[machine.id] ?? "Local device"
+        }
+        switch model.connectivity.hosts[machine.id] ?? .checking {
+        case .checking: return "Checking \(machine.name)…"
+        case .reachable: return model.machineErrors[machine.id] ?? "\(machine.name): SSH connected"
+        case .unavailable(let reason): return "\(machine.name): \(reason)"
+        }
     }
 
     private var sidebarMachines: [DiscoveredMachine] {

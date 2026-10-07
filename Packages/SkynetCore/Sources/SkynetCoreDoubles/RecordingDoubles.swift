@@ -19,9 +19,7 @@ public final class RecordingNotifier: Notifier, @unchecked Sendable {
     }
 
     public func notify(_ notification: SkynetNotification) async {
-        lock.lock()
-        recorded.append(notification)
-        lock.unlock()
+        lock.withLock { recorded.append(notification) }
     }
 
     public func clear() {
@@ -65,10 +63,10 @@ public final class ScriptedPermissionResponder: PermissionResponder, @unchecked 
     }
 
     public func decide(_ request: PermissionRequest) async -> PermissionResponse {
-        lock.lock()
-        recordedRequests.append(request)
-        let answer = answerQueue.isEmpty ? fallback : answerQueue.removeFirst()
-        lock.unlock()
+        let answer = lock.withLock {
+            recordedRequests.append(request)
+            return answerQueue.isEmpty ? fallback : answerQueue.removeFirst()
+        }
         var response = answer
         if response.requestID.isEmpty {
             response.requestID = request.id

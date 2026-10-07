@@ -15,10 +15,16 @@ public enum ExecutionBackendKind: String, Codable, Sendable, Hashable {
 
 /// A process launch request, expressed in backend-neutral terms.
 public struct ExecutionRequest: Hashable, Sendable {
+    public enum StdinMode: Hashable, Sendable {
+        case writable
+        case closed
+    }
+
     public var executable: String
     public var arguments: [String]
     public var environment: [String: String]
     public var workingDirectory: String?
+    public var stdinMode: StdinMode
     /// Diagnostic label used in logs and errors, e.g.
     /// `claude-code:session-42`.
     public var label: String
@@ -28,12 +34,14 @@ public struct ExecutionRequest: Hashable, Sendable {
         arguments: [String] = [],
         environment: [String: String] = [:],
         workingDirectory: String? = nil,
+        stdinMode: StdinMode = .writable,
         label: String
     ) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.workingDirectory = workingDirectory
+        self.stdinMode = stdinMode
         self.label = label
     }
 }

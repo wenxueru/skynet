@@ -301,10 +301,9 @@ private struct UsageSettingsView: View {
             guard let session = model.selectedSession,
                   let modelID = session.modelID else { return }
             let provider = model.selectedProvider
-            let backendID = session.backendID?.rawValue ?? "local"
-            let catalog = await Task.detached {
-                ProviderModelDiscovery.models(for: provider, backendID: backendID)
-            }.value
+            let catalog = await ProviderModelDiscovery.models(
+                for: provider, backend: model.executionBackend(for: session),
+                workingDirectory: session.workingDirectory)
             guard !Task.isCancelled else { return }
             selectedContextWindow = catalog.models.first { $0.id == modelID }?.contextWindowTokens
         }

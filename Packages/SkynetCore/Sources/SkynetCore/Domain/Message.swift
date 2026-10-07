@@ -123,6 +123,10 @@ public struct Message: Codable, Hashable, Sendable, Identifiable {
     }
 
     public var id: MessageID
+    /// Native provider ID when `id` is the explicit client message ID. This
+    /// proves a historical provider copy belongs to this same message, even
+    /// when the provider normalized its attachment representation.
+    public var providerMessageID: MessageID?
     public var origin: Origin
     public var content: [ContentBlock]
     public var createdAt: Date
@@ -133,6 +137,7 @@ public struct Message: Codable, Hashable, Sendable, Identifiable {
 
     public init(
         id: MessageID = MessageID(),
+        providerMessageID: MessageID? = nil,
         origin: Origin,
         content: [ContentBlock],
         createdAt: Date = Date(),
@@ -141,6 +146,7 @@ public struct Message: Codable, Hashable, Sendable, Identifiable {
         usage: TokenUsage? = nil
     ) {
         self.id = id
+        self.providerMessageID = providerMessageID
         self.origin = origin
         self.content = content
         self.createdAt = createdAt

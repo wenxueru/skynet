@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(ImageIO)
+import ImageIO
+#endif
 
 /// A provider-owned conversation found outside Skynet's own store.
 public struct DiscoveredSession: Sendable {
@@ -57,6 +60,7 @@ public enum SessionHistoryDiscovery {
         indexedTitle: String? = nil
     ) -> DiscoveredSession? {
         guard let lines = readJSONLines(at: url), !lines.isEmpty else { return nil }
+        let clientMessages = codexClientMessages(in: lines)
 
         var providerSessionID: String?
         var workingDirectory: String?
@@ -67,7 +71,7 @@ public enum SessionHistoryDiscovery {
         var totalUsage = TokenUsage()
         var modelID: ModelID?
 
-        for frame in lines {
+        for (frameIndex, frame) in lines.enumerated() {
             let timestamp = date(frame["timestamp"]?.stringValue)
             if let timestamp {
                 updatedAt = max(updatedAt ?? timestamp, timestamp)
@@ -128,8 +132,10 @@ public enum SessionHistoryDiscovery {
                 guard !content.isEmpty else { continue }
                 messages.append(
                     Message(
+                        id: clientMessages[frameIndex]?.id ?? codexMessageID(payload["id"]?.stringValue),
+                        providerMessageID: clientMessages[frameIndex]?.providerMessageID,
                         origin: origin,
-                        content: content,
+                        content: clientMessages[frameIndex]?.content ?? content,
                         createdAt: timestamp ?? updatedAt ?? Date(),
                         modelID: origin == .agent ? modelID : nil,
                         providerID: .codex
@@ -155,6 +161,121 @@ public enum SessionHistoryDiscovery {
             messages: messages,
             totalUsage: totalUsage
         )
+    }
+
+    private static func codexMessageID(_ value: String?) -> MessageID {
+        codexProtocolMessageID(value) ?? MessageID()
+    }
+
+    private static func codexProtocolMessageID(_ value: String?) -> MessageID? {
+        guard let value else { return nil }
+        // Retain UUID-shaped client IDs and native msg_<UUID> IDs instead of
+        // inventing new identities each time the same record is imported.
+        let raw = value.hasPrefix("msg_") ? String(value.dropFirst(4)) : value
+        return UUID(uuidString: raw).map(MessageID.init)
+    }
+
+    private static func codexClientMessages(in lines: [JSONValue]) -> [Int: Message] {
+        let clientTurns = Set(lines.compactMap { frame -> String? in
+            guard frame["type"]?.stringValue == "event_msg",
+                  let payload = frame["payload"], payload["type"]?.stringValue == "item_completed",
+                  let item = payload["item"], item["type"]?.stringValue == "UserMessage",
+                  item["client_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil else { return nil }
+            return payload["turn_id"]?.stringValue
+        })
+        guard !clientTurns.isEmpty else { return [:] }
+        var pending: [String: (index: Int, message: Message, ambiguous: Bool)] = [:]
+        var correlated: [Int: Message] = [:]
+        for (index, frame) in lines.enumerated() {
+            guard let payload = frame["payload"] else { continue }
+            if frame["type"]?.stringValue == "response_item",
+               payload["type"]?.stringValue == "message",
+               payload["role"]?.stringValue == "user",
+               let turnID = payload["internal_chat_message_metadata_passthrough"]?["turn_id"]?.stringValue,
+               clientTurns.contains(turnID) {
+                let content = codexMessageContent(payload, role: "user")
+                if !content.isEmpty {
+                    pending[turnID] = (index, Message(
+                        providerMessageID: codexProtocolMessageID(payload["id"]?.stringValue),
+                        origin: .user, content: content
+                    ), pending[turnID] != nil)
+                }
+            } else if frame["type"]?.stringValue == "event_msg",
+                      payload["type"]?.stringValue == "item_completed",
+                      let item = payload["item"], item["type"]?.stringValue == "UserMessage",
+                      let turnID = payload["turn_id"]?.stringValue {
+                // Core persists the prepared response before its UserMessage completion.
+                // Their native IDs are independent; only the completion carries
+                // client_id and original images (prepared input may be resized
+                // or, for GIF, converted to first-frame PNG).
+                guard let response = pending.removeValue(forKey: turnID), !response.ambiguous,
+                      let clientID = item["client_id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { continue }
+                let original = codexMessageContent(item, role: "user")
+                guard matchesPreparedUserContent(response.message.content, original) else { continue }
+                var message = response.message
+                message.id = MessageID(clientID)
+                message.content = original
+                correlated[response.index] = message
+            }
+        }
+        return correlated
+    }
+
+    /// Only used after an explicit client ID, matching turn and unique pending
+    /// response establish protocol correlation. Never a cross-message image
+    /// heuristic: keep original bytes instead of equating arbitrary pictures.
+    private static func matchesPreparedUserContent(_ prepared: [ContentBlock], _ original: [ContentBlock]) -> Bool {
+        guard prepared.count == original.count else { return false }
+        return zip(prepared, original).allSatisfy { prepared, original in
+            if TranscriptMessageMerger.hasSameContent(
+                Message(origin: .user, content: [prepared]),
+                Message(origin: .user, content: [original])
+            ) { return true }
+            guard case .image(let normalized) = prepared, case .image(let source) = original else { return false }
+            if normalized.mediaType.lowercased() == "image/png" && source.mediaType.lowercased() == "image/gif" {
+                return true
+            }
+            return isResizedCodexImage(normalized, original: source)
+        }
+    }
+
+    /// Codex preserves PNG/JPEG/WebP encoding when shrinking prompt images.
+    /// Header-only inspection avoids decoding full-size pixels during discovery.
+    /// This is an additional protocol guard, not a claim of pixel equality.
+    private static func isResizedCodexImage(_ prepared: ImageAttachment, original: ImageAttachment) -> Bool {
+        #if canImport(ImageIO)
+        let mediaType = prepared.mediaType.lowercased()
+        guard mediaType == original.mediaType.lowercased() else { return false }
+        let sourceType: String
+        switch mediaType {
+        case "image/png": sourceType = "public.png"
+        case "image/jpeg": sourceType = "public.jpeg"
+        case "image/webp": sourceType = "org.webmproject.webp"
+        default: return false
+        }
+        func dimensions(_ image: ImageAttachment) -> (width: Double, height: Double)? {
+            guard case .inline(let data, _) = image.payload,
+                  let source = CGImageSourceCreateWithData(data as CFData,
+                      [kCGImageSourceShouldCache: false] as CFDictionary),
+                  CGImageSourceGetType(source) as String? == sourceType,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+                  width >= 1, height >= 1,
+                  width <= Double(UInt32.max), height <= Double(UInt32.max) else { return nil }
+            return (width, height)
+        }
+        guard let input = dimensions(original), let output = dimensions(prepared),
+              output.width <= input.width, output.height <= input.height,
+              output.width < input.width || output.height < input.height else { return false }
+        let scale = min(output.width / input.width, output.height / input.height)
+        // The provider rounds integer output dimensions; allow one pixel at
+        // the edge, but not a differently shaped or upscaled picture.
+        return abs(output.width - input.width * scale) <= 1
+            && abs(output.height - input.height * scale) <= 1
+        #else
+        return false
+        #endif
     }
 
     public static func parseClaudeTranscript(at url: URL) -> DiscoveredSession? {
@@ -393,8 +514,10 @@ public enum SessionHistoryDiscovery {
                 guard role != "user" || kind == nil || kind == "user.text",
                       let text = block["text"]?.stringValue else { continue }
                 textParts.append(text)
-            case "input_image" where role == "user" && (kind == nil || kind == "user.image"):
-                if let imageURL = block["image_url"]?.stringValue,
+            case let type? where ["input_image", "image"].contains(type)
+                && role == "user" && (kind == nil || kind == "user.image"):
+                if let imageURL = block["image_url"]?.stringValue
+                    ?? block["image"]?["image_url"]?.stringValue,
                    let attachment = imageAttachment(dataURL: imageURL) {
                     images.append(.image(attachment))
                 }

@@ -33,7 +33,7 @@ public enum ReasoningEffort: String, Codable, Sendable, CaseIterable, Hashable {
 /// One selectable model exposed by a provider.
 ///
 /// Descriptors are suggestions, not live availability facts. The macOS app
-/// reads Codex availability from its local CLI cache; providers can replace
+/// reads Codex availability through the execution backend's app-server; providers can replace
 /// the suggestions by setting `AgentProviderDescriptor.models`. Never treat a
 /// missing field as an error — decode leniently and let the UI degrade
 /// gracefully.

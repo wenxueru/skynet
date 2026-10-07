@@ -16,6 +16,8 @@ struct SessionFilesView: View {
     @State private var selected: FileEntry?
     @State private var preview: Data?
     @State private var diff: String?
+    @State private var entriesRequestID = UUID()
+    @State private var previewRequestID = UUID()
     @State private var search = ""
     @State private var sort: Sort = .name
     @State private var isLoading = false
@@ -187,56 +189,33 @@ struct SessionFilesView: View {
                 Image(nsImage: image).resizable().scaledToFit().padding(20)
             }
         } else if let text = String(data: data, encoding: .utf8), !text.contains("\0") {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let diff, !diff.isEmpty {
-                        Text("Changes").font(.headline)
-                        let lines = diff.split(separator: "\n", omittingEmptySubsequences: false)
-                        LazyVStack(alignment: .leading, spacing: 1) {
-                            ForEach(Array(lines.prefix(500).enumerated()), id: \.offset) { _, line in
-                                let value = String(line)
-                                Text(value.isEmpty ? " " : value)
-                                    .foregroundStyle(value.hasPrefix("+") ? .green
-                                        : value.hasPrefix("-") ? .red : .secondary)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-                            if lines.count > 500 {
-                                Text("Diff preview truncated after 500 lines")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    Text(text).textSelection(.enabled)
-                        .font(.system(.callout, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(16)
-            }
+            FileTextPreview(text: text, diff: diff)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView("Binary file", systemImage: "doc")
         }
     }
 
     private func loadEntries() {
+        let requestID = UUID()
+        entriesRequestID = requestID
         isLoading = true
         errorMessage = nil
         let browser = browser
         let currentTab = tab
         let currentDirectory = directory
         Task {
-            do {
-                let loaded = try await Task.detached(priority: .userInitiated) {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result {
                     try currentTab == .changes
                         ? browser.changes() : browser.entries(in: currentDirectory)
-                }.value
-                guard tab == currentTab, directory == currentDirectory else { return }
-                entries = loaded
+                }
+            }.value
+            guard entriesRequestID == requestID,
+                  tab == currentTab, directory == currentDirectory else { return }
+            do {
+                entries = try result.get()
             } catch {
-                guard tab == currentTab, directory == currentDirectory else { return }
                 if currentTab == .changes,
                    error.localizedDescription.contains("not a git repository") {
                     tab = .directories
@@ -249,22 +228,100 @@ struct SessionFilesView: View {
     }
 
     private func loadPreview(_ entry: FileEntry?) {
+        let requestID = UUID()
+        previewRequestID = requestID
         preview = nil
         diff = nil
+        errorMessage = nil
         guard let entry, !entry.isDirectory else { return }
         let browser = browser
         Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { (try browser.readFile(entry.path), try? browser.diff(for: entry.path)) }
+            }.value
+            guard previewRequestID == requestID, selected?.path == entry.path else { return }
             do {
-                let (data, patch) = try await Task.detached(priority: .userInitiated) {
-                    (try browser.readFile(entry.path), try? browser.diff(for: entry.path))
-                }.value
-                guard selected?.path == entry.path else { return }
+                let (data, patch) = try result.get()
                 preview = data
                 diff = patch
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+}
+
+/// Keep file contents in a bounded native viewport, rather than asking SwiftUI
+/// to measure one selectable Text spanning the entire document on every layout.
+private struct FileTextPreview: NSViewRepresentable {
+    let text: String
+    let diff: String?
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+
+        let view = NSTextView(frame: .zero)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isRichText = false
+        view.drawsBackground = false
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.minSize = .zero
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.textContainerInset = NSSize(width: 16, height: 16)
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        view.layoutManager?.allowsNonContiguousLayout = true
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard context.coordinator.text != text || context.coordinator.diff != diff,
+              let view = scroll.documentView as? NSTextView else { return }
+        context.coordinator.text = text
+        context.coordinator.diff = diff
+
+        let contents = NSMutableAttributedString(string: "")
+        if let diff, !diff.isEmpty {
+            contents.append(NSAttributedString(string: "Changes\n\n", attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 14), .foregroundColor: NSColor.textColor
+            ]))
+            // Keep one extra element to detect truncation without splitting the whole diff.
+            let lines = diff.split(separator: "\n", maxSplits: 500, omittingEmptySubsequences: false)
+            for line in lines.prefix(500) {
+                let color: NSColor = line.hasPrefix("+") ? .systemGreen
+                    : line.hasPrefix("-") ? .systemRed : .secondaryLabelColor
+                contents.append(NSAttributedString(string: String(line) + "\n", attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                    .foregroundColor: color
+                ]))
+            }
+            if lines.count > 500 {
+                contents.append(NSAttributedString(string: "Diff preview truncated after 500 lines\n", attributes: [
+                    .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor
+                ]))
+            }
+            contents.append(NSAttributedString(string: "\n"))
+        }
+        contents.append(NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
+            .foregroundColor: NSColor.textColor
+        ]))
+        view.textStorage?.setAttributedString(contents)
+        view.scrollRangeToVisible(NSRange(location: 0, length: 0))
+    }
+
+    final class Coordinator {
+        var text: String?
+        var diff: String?
     }
 }
 
@@ -302,11 +359,16 @@ private struct SessionFileBrowser: Sendable {
                     return FileEntry(path: path, isDirectory: kind == UInt8(ascii: "D"))
                 }
         }
+        let directoryURL = URL(fileURLWithPath: directory)
         return try FileManager.default.contentsOfDirectory(
-            at: URL(fileURLWithPath: directory),
+            at: directoryURL.resolvingSymlinksInPath(),
             includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
-        ).prefix(2_000).map { url in
-            let values = try url.resourceValues(forKeys: [
+        ).prefix(2_000).map { childURL in
+            // Keep the displayed/parent path under the user's directory alias,
+            // but follow valid in-project links when determining file kind.
+            let url = directoryURL.appendingPathComponent(childURL.lastPathComponent)
+            let metadataURL = isInsideRoot(url.path) ? url.resolvingSymlinksInPath() : url
+            let values = try metadataURL.resourceValues(forKeys: [
                 .isDirectoryKey, .fileSizeKey, .contentModificationDateKey
             ])
             return FileEntry(
@@ -395,11 +457,17 @@ private struct SessionFileBrowser: Sendable {
         process.standardOutput = output
         process.standardError = error
         try process.run()
+        // Drain both pipes concurrently: a child can fill stderr before it
+        // closes stdout, otherwise each side waits for the other indefinitely.
+        let diagnostics = ProcessDiagnosticsReader(
+            handle: error.fileHandleForReading, maximumBytes: 64 * 1024
+        )
         defer {
             if process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
             }
+            _ = try? diagnostics.finish()
         }
         var data = Data()
         while let chunk = try output.fileHandleForReading.read(upToCount: 64 * 1024),
@@ -409,7 +477,7 @@ private struct SessionFileBrowser: Sendable {
             }
             data.append(chunk)
         }
-        let diagnostic = error.fileHandleForReading.readDataToEndOfFile()
+        let diagnostic = try diagnostics.finish()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             throw BrowserError.commandFailed(String(decoding: diagnostic, as: UTF8.self))

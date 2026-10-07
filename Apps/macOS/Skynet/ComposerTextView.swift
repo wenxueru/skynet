@@ -32,6 +32,7 @@ struct ComposerTextView: NSViewRepresentable {
         view.font = .preferredFont(forTextStyle: .body)
         view.drawsBackground = false
         view.isRichText = false
+        view.allowsUndo = true
         view.textContainerInset = NSSize(width: 4, height: 7)
         view.textContainer?.widthTracksTextView = true
         view.registerForDraggedTypes([.fileURL, .png, .tiff])
@@ -45,7 +46,12 @@ struct ComposerTextView: NSViewRepresentable {
         // Do not replace NSTextView's contents while an IME owns a marked-text
         // composition; doing so cancels the in-progress input method session.
         guard !view.hasMarkedText() else { return }
-        if view.string != text { view.string = text }
+        if view.string != text {
+            // A sent/cleared/replaced draft is a new editing context. Do not
+            // let Undo restore text from the previous draft.
+            view.undoManager?.removeAllActions()
+            view.string = text
+        }
         if view.selectedRange() != selection, NSMaxRange(selection) <= view.string.utf16.count {
             view.setSelectedRange(selection)
         }
@@ -53,8 +59,32 @@ struct ComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
+        // Keep draft edits separate from other controls sharing the window.
+        private let draftUndoManager = UndoManager()
+        private weak var undoTextView: NSTextView?
 
-        init(parent: ComposerTextView) { self.parent = parent }
+        init(parent: ComposerTextView) {
+            self.parent = parent
+            super.init()
+            for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(undoDidChange(_:)), name: name, object: draftUndoManager
+                )
+            }
+        }
+
+        deinit { NotificationCenter.default.removeObserver(self) }
+
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            undoTextView = view
+            return draftUndoManager
+        }
+
+        @objc private func undoDidChange(_ notification: Notification) {
+            // Native Undo/Redo can mutate text storage without textDidChange.
+            // Sync the binding before SwiftUI can restore the old draft.
+            textDidChange(Notification(name: NSText.didChangeNotification, object: undoTextView))
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
@@ -71,6 +101,9 @@ struct ComposerTextView: NSViewRepresentable {
             _ textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
+            // Candidate confirmation/navigation belongs to the active IME,
+            // not message sending or the composer's completion menu.
+            guard !textView.hasMarkedText() else { return false }
             if parent.suggestionsPresented {
                 switch commandSelector {
                 case #selector(NSResponder.moveUp(_:)):

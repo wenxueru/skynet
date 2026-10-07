@@ -95,6 +95,7 @@ public struct SSHBackend: ExecutionBackend {
             arguments: Self.sshArguments(for: request, host: host, port: port, user: user),
             environment: request.environment,
             workingDirectory: nil,
+            stdinMode: request.stdinMode,
             label: "ssh:\(request.label)"
         )
         return try await launcher.launch(sshRequest)

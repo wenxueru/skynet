@@ -1,9 +1,11 @@
 import Foundation
-import SkynetCore
+@testable import SkynetCore
 import SkynetCoreDoubles
 import Testing
 
 #if os(macOS)
+import Darwin
+
 @Suite("SSH failure diagnostics")
 struct SSHFailureDiagnosticsTests {
     @Test func omitsNonFatalCryptoAndControlSocketWarnings() {
@@ -38,6 +40,97 @@ struct SSHFailureDiagnosticsTests {
 
 @Suite("Local process backend")
 struct LocalProcessBackendTests {
+    @Test func lateStdinWriteAfterExitThrowsWithoutTerminatingParent() async throws {
+        let process = try LocalProcessBackend().launch(ExecutionRequest(
+            executable: "/usr/bin/true", stdinMode: .writable, label: "late-stdin-test"
+        ))
+        #expect(try await process.waitUntilExit() == 0)
+        do {
+            try await process.writeToStdin(Data("late permission reply\n".utf8))
+            Issue.record("A write after the child exited must fail")
+        } catch {
+            #expect(error.localizedDescription.contains("Writing to the agent's stdin failed"))
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func terminationStopsOwnedChildrenAndGrandchildren(nested: Bool) async throws {
+        let sibling = try LocalProcess(request: ExecutionRequest(
+            executable: "/bin/sleep", arguments: ["60"],
+            stdinMode: .closed, label: "unrelated-sibling-test"
+        ))
+        defer { sibling.terminate() }
+        let childScript = "/bin/sleep 60 & child=$!; printf '%s\\n' \"$child\"; wait \"$child\""
+        let script = nested ? "/bin/sh -c '\(childScript.replacingOccurrences(of: "'", with: "'\\''"))' & wait" : childScript
+        let process = try LocalProcessBackend().launch(ExecutionRequest(
+            executable: "/bin/sh", arguments: ["-c", script],
+            stdinMode: .closed, label: "owned-descendant-test"
+        ))
+        var iterator = process.stdoutLines.makeAsyncIterator()
+        let line = try #require(try await iterator.next())
+        let childPID = try #require(pid_t(line))
+        #expect(Darwin.kill(childPID, 0) == 0)
+
+        await process.terminate()
+        _ = try await process.waitUntilExit()
+        // A terminated child can briefly remain as a zombie pending reaping.
+        // Both absent and zombie are exited, unlike an orphaned live sleep.
+        var running = true
+        for _ in 0..<100 {
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            running = proc_pidinfo(childPID, PROC_PIDTBSDINFO, 0, &info, size) == size
+                && info.pbi_status != SZOMB
+            if !running { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if running { _ = Darwin.kill(childPID, SIGTERM) }
+        #expect(!running)
+        #expect(sibling.process.isRunning)
+    }
+
+    @Test func diagnosticsIdentifyTheChildNotTheParentPID() async throws {
+        let process = try LocalProcessBackend().launch(ExecutionRequest(
+            executable: "/bin/sh", arguments: ["-c", "echo $$"],
+            stdinMode: .closed, label: "pid-test"
+        ))
+        let output = try await lines(from: process.stdoutLines)
+        #expect(try await process.waitUntilExit() == 0)
+        let pid = try #require(output?.first)
+        #expect(process.identifier == "\(pid)/pid-test")
+        #expect(pid != String(ProcessInfo.processInfo.processIdentifier))
+    }
+
+    @Test func userLocalInstallPrecedesPackageManagerFallbacks() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let directories = LocalProcessBackend.fallbackSearchDirectories(homeDirectory: home)
+        #expect(directories.first == "\(home)/.local/bin")
+        #expect(directories.firstIndex(of: "/opt/homebrew/bin") == 1)
+    }
+
+    @Test func childReceivesExecutableSearchPath() async throws {
+        let process = try LocalProcessBackend().launch(
+            ExecutionRequest(executable: "/usr/bin/env", label: "child-path-test")
+        )
+        let output = try await lines(from: process.stdoutLines)
+        #expect(try await process.waitUntilExit() == 0)
+        let path = try #require(output?.first(where: { $0.hasPrefix("PATH=") }))
+        #expect(path.split(separator: ":").contains("/opt/homebrew/bin"))
+        #expect(path.contains("/.npm-global/bin"))
+    }
+
+    @Test func explicitChildPathIsPreserved() async throws {
+        let process = try LocalProcessBackend().launch(
+            ExecutionRequest(
+                executable: "/usr/bin/env", environment: ["PATH": "/usr/bin:/bin"],
+                label: "explicit-child-path-test"
+            )
+        )
+        let output = try await lines(from: process.stdoutLines)
+        #expect(try await process.waitUntilExit() == 0)
+        #expect(output?.contains("PATH=/usr/bin:/bin") == true)
+    }
+
     @Test func outputStreamsFinishWhenTheChildExits() async throws {
         let process = try LocalProcessBackend().launch(
             ExecutionRequest(
@@ -47,10 +140,42 @@ struct LocalProcessBackendTests {
             )
         )
 
+        let stdout = Task { try await lines(from: process.stdoutLines) }
+        let stderr = Task { try await lines(from: process.stderrLines) }
         let exitCode = try await process.waitUntilExit()
         #expect(exitCode == 0)
-        #expect(try await lines(from: process.stdoutLines) == ["stdout"])
-        #expect(try await lines(from: process.stderrLines) == ["stderr"])
+        #expect(try await stdout.value == ["stdout"])
+        #expect(try await stderr.value == ["stderr"])
+    }
+
+    @Test func closedStdinDeliversEOFToTheChild() async throws {
+        let process = try LocalProcessBackend().launch(
+            ExecutionRequest(
+                executable: "/bin/sh",
+                arguments: ["-c", "if IFS= read -r line; then printf 'unexpected-input\\n'; else printf 'eof\\n'; fi"],
+                stdinMode: .closed,
+                label: "closed-stdin-test"
+            )
+        )
+
+        let output = try await lines(from: process.stdoutLines)
+        if output == nil { await process.terminate() }
+        #expect(output == ["eof"])
+        #expect(try await process.waitUntilExit() == 0)
+    }
+
+    @Test func writableStdinStillAcceptsInput() async throws {
+        let process = try LocalProcessBackend().launch(
+            ExecutionRequest(
+                executable: "/bin/sh",
+                arguments: ["-c", "IFS= read -r line; printf '%s\\n' \"$line\""],
+                label: "writable-stdin-test"
+            )
+        )
+
+        try await process.writeToStdin(Data("hello\n".utf8))
+        #expect(try await lines(from: process.stdoutLines) == ["hello"])
+        #expect(try await process.waitUntilExit() == 0)
     }
 }
 

@@ -218,8 +218,16 @@ enum RemoteSessionDiscovery {
             process.standardOutput = stdout
             process.standardError = stderr
             try process.run()
+            let diagnostics = ProcessDiagnosticsReader(handle: stderr.fileHandleForReading)
+            defer {
+                if process.isRunning {
+                    process.terminate()
+                    process.waitUntilExit()
+                }
+                _ = try? diagnostics.finish()
+            }
             let output = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let errorData = try diagnostics.finish()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 throw SkynetError.executionFailed(
@@ -285,8 +293,16 @@ enum RemoteSessionDiscovery {
             process.standardOutput = stdout
             process.standardError = stderr
             try process.run()
+            let diagnostics = ProcessDiagnosticsReader(handle: stderr.fileHandleForReading)
+            defer {
+                if process.isRunning {
+                    process.terminate()
+                    process.waitUntilExit()
+                }
+                _ = try? diagnostics.finish()
+            }
             let output = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let errorData = try diagnostics.finish()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 throw SkynetError.executionFailed(
@@ -311,16 +327,7 @@ import glob,json,os,sys
 provider,sid,cursor=sys.argv[1:4]
 home=os.path.expanduser('~')
 
-def previous_line_start(source, offset):
-    upper=offset
-    while upper>0:
-        lower=max(0,upper-65536)
-        source.seek(lower)
-        chunk=source.read(upper-lower)
-        newline=chunk.rfind(b'\n')
-        if newline>=0: return lower+newline+1
-        upper=lower
-    return 0
+\#(CodexTranscriptPageBoundary.pythonScript)
 
 if provider=='codex':
     paths=[p for p in glob.glob(os.path.join(home,'.codex','sessions','**','*.jsonl'),recursive=True)
@@ -345,6 +352,7 @@ with open(path,'rb') as source:
             if start>=end:
                 start=previous_line_start(source,requested_start)
         else: source.seek(start)
+    if provider=='codex': start=codex_page_start(source,start,end)
     source.seek(0)
     meta=None
     while True:
@@ -559,6 +567,25 @@ private enum SessionTranscriptPageParser {
 }
 
 enum SessionTranscriptDiscovery {
+    /// Only local Codex parent rollouts are supported by this supplemental
+    /// activity source. Resolution occurs once per turn, not once per poll.
+    static func codexActivityReader(
+        for record: SessionRecord, provider: AgentProviderDescriptor,
+        notBefore: Date, startAtEnd: Bool
+    ) async -> CodexSubagentActivityReader? {
+        guard provider.kind == .codex, record.providerID == .codex,
+              record.backendID == nil || record.backendID == DiscoveredMachine.local.id,
+              record.forkSourceToken == nil,
+              let token = record.providerResumeToken, UUID(uuidString: token) != nil else { return nil }
+        let codexHome = provider.environment["CODEX_HOME"]
+            ?? ProcessInfo.processInfo.environment["CODEX_HOME"]
+        if let codexHome, !codexHome.hasPrefix("/") { return nil }
+        return await LocalSessionTranscriptDiscovery.codexActivityReader(
+            token: token, codexHome: codexHome.map { URL(fileURLWithPath: $0, isDirectory: true) },
+            notBefore: notBefore, startAtEnd: startAtEnd
+        )
+    }
+
     static func transcriptPage(
         for record: SessionRecord,
         before cursor: Int64? = nil
@@ -580,6 +607,19 @@ private enum LocalSessionTranscriptDiscovery {
     private static let pageSize = JSONDiskStore.messagePageSize
     private static let maxMetadataLineSize = 1024 * 1024
 
+    static func codexActivityReader(
+        token: String, codexHome: URL?, notBefore: Date, startAtEnd: Bool
+    ) async -> CodexSubagentActivityReader? {
+        await Task.detached(priority: .utility) {
+            guard let url = transcriptURL(providerID: .codex, token: token, codexHome: codexHome) else {
+                return nil
+            }
+            return try? CodexSubagentActivityReader(
+                url: url, parentThreadID: token, notBefore: notBefore, startAtEnd: startAtEnd
+            )
+        }.value
+    }
+
     static func transcriptPage(
         for record: SessionRecord,
         before cursor: Int64? = nil
@@ -590,7 +630,7 @@ private enum LocalSessionTranscriptDiscovery {
             guard let sourceURL = transcriptURL(providerID: record.providerID, token: token) else {
                 return nil
             }
-            let output = try readPage(at: sourceURL, before: cursor)
+            let output = try readPage(at: sourceURL, before: cursor, providerID: record.providerID)
             return try SessionTranscriptPageParser.parse(
                 output,
                 for: record,
@@ -600,12 +640,13 @@ private enum LocalSessionTranscriptDiscovery {
         }.value
     }
 
-    private static func transcriptURL(providerID: ProviderID, token: String) -> URL? {
+    private static func transcriptURL(providerID: ProviderID, token: String, codexHome: URL? = nil) -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let root: URL
         switch providerID {
         case .codex:
-            root = home.appendingPathComponent(".codex/sessions", isDirectory: true)
+            root = (codexHome ?? home.appendingPathComponent(".codex", isDirectory: true))
+                .appendingPathComponent("sessions", isDirectory: true)
         case .claudeCode:
             root = home.appendingPathComponent(".claude/projects", isDirectory: true)
         default:
@@ -632,7 +673,7 @@ private enum LocalSessionTranscriptDiscovery {
         return newest?.url
     }
 
-    private static func readPage(at url: URL, before cursor: Int64?) throws -> Data {
+    private static func readPage(at url: URL, before cursor: Int64?, providerID: ProviderID) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
@@ -650,6 +691,9 @@ private enum LocalSessionTranscriptDiscovery {
             }
         }
 
+        if providerID == .codex {
+            start = try CodexTranscriptPageBoundary.adjustedStart(in: handle, start: start, end: end)
+        }
         var output = Data("{\"cursor\":\(start)}\n".utf8)
         if start > 0 {
             handle.seek(toFileOffset: 0)
