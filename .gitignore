@@ -7,6 +7,13 @@ Packages/SkynetCore/.build/
 xcuserdata/
 history.cmt
 commit.tmp
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Local agent memory, QA handoff and historical diagnostics
 /AGENTS.md
@@ -14,3 +21,6 @@ commit.tmp
 /docs/project_memory_reference.md
 /docs/status.md
 /docs/archive/
+/Apps/macOS/Tests/SessionExportAudit.swift
+/Apps/macOS/Tests/TranscriptToolProvenanceAudit.swift
+/Apps/macOS/Tests/run-transcript-tool-provenance-audit.sh

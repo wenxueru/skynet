@@ -10,7 +10,8 @@ enum FileBrowserBoundaryRegression {
 
     private static func verify() throws {
         let manager = FileManager.default
-        let parent = URL(fileURLWithPath: "/workspace/skynet/DerivedData", isDirectory: true)
+        let parent = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("DerivedData", isDirectory: true)
         let fixture = parent.appendingPathComponent("qa-file-boundary-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: fixture, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: fixture) }

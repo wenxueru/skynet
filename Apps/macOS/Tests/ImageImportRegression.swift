@@ -8,7 +8,8 @@ enum ImageImportRegression {
     }
 
     private static func verify() throws {
-        let fixture = URL(fileURLWithPath: "/workspace/skynet/DerivedData/qa-image-import-20261003")
+        let fixture = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("DerivedData/qa-image-import-20261003")
         let files = FileManager.default
         let names = ["sample.png", "sample.jpg", "sample.tiff", "jpeg-as-png.png", "invalid.png",
                      "animated.gif", "rotated.heic", "sample.webp", "webp-as-png.png"]

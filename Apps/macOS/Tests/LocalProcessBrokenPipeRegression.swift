@@ -12,7 +12,7 @@ enum LocalProcessBrokenPipeRegression {
             let backend = LocalProcessBackend()
             let process = try backend.launch(ExecutionRequest(
                 executable: "/usr/bin/true", arguments: [],
-                workingDirectory: "/workspace/skynet",
+                workingDirectory: FileManager.default.currentDirectoryPath,
                 stdinMode: .writable, label: "owned-broken-pipe-fixture"))
             let exitCode = try await process.waitUntilExit()
             guard exitCode == 0 else { throw SkynetError.executionFailed(reason: "own child exit \(exitCode)") }

@@ -137,3 +137,6 @@ paired-device end-to-end operation is not presented as a completed feature.
 Read the [architecture boundaries](docs/architecture.md) and
 [migration scope](docs/hapi_migration_audit.md) for implementation details.
 Agent memory, QA status and debug history stay local and out of Git.
+
+Before contributing, enable the staged-file privacy check with
+`git config --local core.hooksPath .githooks`. CI also scans reachable Git history.

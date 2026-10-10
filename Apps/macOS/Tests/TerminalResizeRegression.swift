@@ -16,7 +16,7 @@ enum TerminalResizeRegression {
         let controller = TerminalController()
         let usesUserLoginStartup = CommandLine.arguments.contains("--user-login-startup")
         controller.configure(
-            workingDirectory: "/workspace/skynet",
+            workingDirectory: FileManager.default.currentDirectoryPath,
             sshHost: nil,
             launchCommand: "exec /usr/bin/env 'PS1=QA_NATIVE_PROMPT> ' /bin/sh -i +H",
             // Optional diagnostic uses the same global/user startup files as

@@ -7,7 +7,8 @@ enum ComposerCatalogRegression {
     }
 
     private static func verify() throws {
-        let root = URL(fileURLWithPath: "/workspace/skynet/DerivedData")
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("DerivedData")
             .appendingPathComponent("qa-composer-catalog-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -13,7 +13,7 @@ private struct SheetFixtureHost: View {
             IntegratedTerminalView(
                 mode: .shell,
                 session: SessionRecord(providerID: .codex,
-                    workingDirectory: "/workspace/skynet"),
+                    workingDirectory: FileManager.default.currentDirectoryPath),
                 provider: nil
             )
         }
