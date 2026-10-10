@@ -8,8 +8,8 @@ import SkynetCore
 @main
 enum CatalogLaunchControl {
     static func main() async {
-        let project = "/workspace/skynet"
-        guard FileManager.default.currentDirectoryPath == project else {
+        let project = FileManager.default.currentDirectoryPath
+        guard FileManager.default.fileExists(atPath: project + "/Skynet.xcodeproj/project.pbxproj") else {
             print("FAIL: launch this control only from the Skynet project")
             exit(64)
         }
@@ -22,8 +22,7 @@ enum CatalogLaunchControl {
             print("FAIL: unsupported control arguments")
             exit(64)
         }
-        var provider = AgentProviderDescriptor.codex
-        provider.executable = "/Users/example/.local/bin/codex"
+        let provider = AgentProviderDescriptor.codex
         let started = ContinuousClock.now
         do {
             let catalog = try await CodexModelDiscovery.load(
