@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// A deterministic, scriptable `SkynetRelay` used by SwiftUI previews, unit

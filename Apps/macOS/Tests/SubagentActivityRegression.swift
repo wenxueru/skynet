@@ -9,6 +9,10 @@ final class AppModel {
     var liveStatusText: String?
     var errorMessage: String?
     var liveTools: [LiveTool] = []
+    struct MobileActivitySink {
+        func receive(_ event: AgentEvent, for id: SessionID) {}
+    }
+    let mobileRelay = MobileActivitySink()
     // PRODUCTION_MEMBERS
 
     func consume(_ event: AgentEvent, sessionID: SessionID) {

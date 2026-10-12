@@ -30,7 +30,7 @@ public struct PairingOffer: Equatable, Codable, Sendable {
 }
 
 /// The in-progress state after an offer is accepted by the relay.
-public struct PairingHandshake: Equatable, Sendable {
+public struct PairingHandshake: Codable, Equatable, Sendable {
     public var offer: PairingOffer
     /// Six digits shown on the Mac; the user confirms they match.
     public var verificationCode: String
@@ -45,7 +45,7 @@ public struct PairingHandshake: Equatable, Sendable {
 }
 
 /// Errors specific to the pairing flow.
-public enum PairingError: Error, Equatable, Sendable {
+public enum PairingError: Codable, Error, Equatable, Sendable {
     /// The scanned or typed string is not a valid pairing code.
     case invalidCode
     /// The code was structurally valid but has expired.
@@ -60,7 +60,7 @@ public enum PairingError: Error, Equatable, Sendable {
 
 /// Result of a successful pairing: the machine record plus the long-lived
 /// credential the app must persist.
-public struct PairingResult: Equatable, Sendable {
+public struct PairingResult: Codable, Equatable, Sendable {
     public let machine: Machine
     public let credential: MachineCredential
 
@@ -105,7 +105,7 @@ public protocol PairingService: Sendable {
 ///
 /// Format: `skynet-pair://pair?v=1&m=<name>&e=<base64url endpoint>&t=<token>`
 /// (`x` carries an optional expiry timestamp).
-public struct PairingCodeCodec: Sendable {
+public struct PairingCodeCodec: Codable, Sendable {
     public static let scheme = "skynet-pair"
     private static let version = 1
 

@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Backs the machine/project library (compact root and iPad sidebar).
@@ -49,6 +50,7 @@ public final class LibraryViewModel {
     /// other's results: the strongest failure wins the banner, the lists stay
     /// as full as the data allows.
     public func load() async {
+        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
@@ -74,12 +76,11 @@ public final class LibraryViewModel {
             }
             projectsByMachine = grouped
             await sessionIndex.register(projects: projects)
-        } catch is SkynetError {
-            // Not-paired / not-connected is a normal state for this screen.
+        } catch SkynetError.notPaired {
             projectsByMachine = [:]
         } catch {
             projectError = "Couldn't load projects from your Mac. \(error.localizedDescription)"
-            projectsByMachine = [:]
+            // Preserve previously loaded projects during a transient disconnect.
         }
 
         loadError = projectError ?? machineError
@@ -110,6 +111,7 @@ public final class LibraryViewModel {
     // MARK: - Unpairing
 
     public func unpair(_ machine: Machine) async {
+        guard !isUnpairing else { return }
         isUnpairing = true
         defer { isUnpairing = false }
 
@@ -122,6 +124,7 @@ public final class LibraryViewModel {
         }
         do {
             try await machineStore.forgetMachine(machine.id)
+            projectsByMachine[machine.id] = nil
         } catch {
             loadError = "Couldn't remove \(machine.displayName) from this device. \(error.localizedDescription)"
         }

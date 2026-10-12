@@ -45,6 +45,10 @@ final class AppModel {
     var stopOnCompletion = false
     var onDispatch: ((QueuedPrompt) -> Void)?
     var activityReports: [SubagentStatusReport] = []
+    struct MobileActivitySink {
+        func finishTurn(for id: SessionID) {}
+    }
+    let mobileRelay = MobileActivitySink()
 
     init(store: JSONDiskStore, record: SessionRecord, backend: ScriptedExecutionBackend) {
         self.store = store

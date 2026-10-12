@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Floating "back to latest" affordance shown while the reader has scrolled

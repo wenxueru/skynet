@@ -47,13 +47,13 @@ public enum TurnState: String, Codable, Hashable, Sendable {
     /// True while the agent is actively working through a turn.
     public var isBusy: Bool {
         switch self {
-        case .idle: return false
-        case .running, .awaitingPermission, .canceling, .failed: return true
+        case .idle, .failed: return false
+        case .running, .awaitingPermission, .canceling: return true
         }
     }
 
     /// Whether a new prompt can be sent immediately.
-    public var acceptsNewPrompt: Bool { self == .idle }
+    public var acceptsNewPrompt: Bool { self == .idle || self == .failed }
 
     /// User-facing label for badges and menus.
     public var displayName: String {

@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 #if canImport(ActivityKit)
 import ActivityKit

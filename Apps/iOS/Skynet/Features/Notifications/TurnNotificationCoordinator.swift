@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Decides when agent activity deserves a local notification and schedules

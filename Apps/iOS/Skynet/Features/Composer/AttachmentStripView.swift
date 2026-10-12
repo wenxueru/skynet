@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Horizontal strip of pending attachments above the composer field, each

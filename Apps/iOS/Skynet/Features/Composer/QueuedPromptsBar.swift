@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Compact bar above the composer showing how many prompts are queued and

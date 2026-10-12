@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// The secure pairing flow, presented as a sheet (or pushed on compact
@@ -67,6 +68,7 @@ public struct PairingView: View {
             }
         }
         .accessibilityIdentifier(A11yID.Pairing.root)
+        .onDisappear { model.cancel() }
     }
 
     // MARK: - Entry
@@ -83,8 +85,9 @@ public struct PairingView: View {
                 Text("Connect to your Mac")
                     .font(.title2.weight(.semibold))
                 Text(
-                    "On your Mac, open the agent app and choose “Add iPhone”. "
-                        + "Scan the pairing code it shows, or type it in."
+                    "On your Mac, open Skynet Settings → Mobile Access → New pairing invitation. "
+                        + "Connect both devices to the same network, then scan or paste the pairing code. "
+                        + "One Mac can be paired at a time."
                 )
                 .font(.subheadline)
                 .foregroundStyle(Color.secondary)

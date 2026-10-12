@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Assistant/user message body that collapses behind a "Show more" control

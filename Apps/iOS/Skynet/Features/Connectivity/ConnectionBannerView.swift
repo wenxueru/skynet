@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Inline connectivity banner. Reads the shared connection monitor; hidden

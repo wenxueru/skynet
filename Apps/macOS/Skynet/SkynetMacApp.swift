@@ -9,7 +9,10 @@ struct SkynetMacApp: App {
         WindowGroup {
             ContentView(model: model)
                 .frame(minWidth: 980, minHeight: 640)
-                .onAppear { AppAppearance.apply(appearance) }
+                .onAppear {
+                    AppAppearance.apply(appearance)
+                    model.mobileRelay.restoreIfEnabled()
+                }
                 .onChange(of: appearance) { _, value in AppAppearance.apply(value) }
         }
         .windowStyle(.hiddenTitleBar)

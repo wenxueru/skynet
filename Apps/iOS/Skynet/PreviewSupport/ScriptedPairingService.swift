@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Deterministic `PairingService` for previews and tests. The flow mirrors

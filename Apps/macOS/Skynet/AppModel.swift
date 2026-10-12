@@ -2,25 +2,12 @@ import AppKit
 import Foundation
 import Observation
 import SkynetCore
-import ImageIO
 
 @MainActor
 @Observable
 final class AppModel {
-    struct QueuedPrompt: Codable, Identifiable {
-        var id = UUID()
-        var text: String
-        var attachments: [ImageAttachment]
-        var createdAt = Date()
-        var scheduledAt: Date? = nil
-        /// A persisted dispatch marker prevents an uncertain send from being replayed.
-        var dispatchStartedAt: Date? = nil
-    }
-
-    struct ComposerDraft: Codable {
-        var text: String
-        var attachments: [ImageAttachment]
-    }
+    typealias QueuedPrompt = SessionComposerStorage.QueuedPrompt
+    typealias ComposerDraft = SessionComposerStorage.ComposerDraft
 
     struct LiveTool: Identifiable {
         var id: ToolCallID
@@ -73,8 +60,8 @@ final class AppModel {
         isSelectedSessionRunning
             || (selectedSessionID != nil && selectedSessionID == scheduledDispatchSessionID)
     }
-    var pendingPermissionRequest: PermissionRequest?
-    var pendingPermissionSessionTitle: String?
+    var pendingPermissionRequest: PermissionRequest? { permissionController.pendingPermissionRequest }
+    var pendingPermissionSessionTitle: String? { permissionController.pendingPermissionSessionTitle }
     var machines: [DiscoveredMachine] = [.local] {
         didSet { connectivity.configure(machines: visibleMachines) }
     }
@@ -82,6 +69,7 @@ final class AppModel {
         didSet { connectivity.configure(machines: visibleMachines) }
     }
     let connectivity = NetworkConnectivityMonitor()
+    @ObservationIgnored lazy var mobileRelay = MobileHostController(model: self)
     private var deletedDiscoveryKeys: Set<DiscoverySessionKey>
     var machineErrors: [BackendID: String] = [:]
     var isDiscovering = false
@@ -96,9 +84,9 @@ final class AppModel {
     private var liveSessionID: SessionID?
     private var streamTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
-    private var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
-    private var pendingPermissionSessionID: SessionID?
-    private var permissionRequestToken: UUID?
+    private let permissionController = SessionPermissionController()
+    private var pendingPermissionSessionID: SessionID? { permissionController.pendingPermissionSessionID }
+    private var permissionRequestToken: UUID? { permissionController.permissionRequestToken }
     private var scheduleTimer: Task<Void, Never>?
     private var scheduledDispatch: Task<Void, Never>?
     private var scheduledDispatchSessionID: SessionID?
@@ -150,6 +138,52 @@ final class AppModel {
         sessions.first { $0.id == selectedSessionID }
     }
 
+    var mobileActiveSessionID: SessionID? { activeTurnSessionID ?? scheduledDispatchSessionID }
+
+    var mobilePermission: (request: PermissionRequest, token: UUID, owner: SessionID)? {
+        guard let request = pendingPermissionRequest, let token = permissionRequestToken,
+              let owner = pendingPermissionSessionID else { return nil }
+        return (request, token, owner)
+    }
+
+    func mobileAnswerPermission(sessionID: SessionID, token: UUID, requestID: String,
+                                decision: PermissionResponse.Decision) throws {
+        guard let pending = mobilePermission, pending.owner == sessionID,
+              pending.token == token, pending.request.id == requestID else {
+            throw CocoaError(.userCancelled)
+        }
+        answerPermission(decision)
+    }
+
+    func mobileCancel(sessionID: SessionID) throws {
+        guard let cancel = turnCancellationAction(for: sessionID) else { throw CocoaError(.userCancelled) }
+        cancel()
+    }
+
+    func mobileSend(_ prompt: String, attachments: [ImageAttachment], record: SessionRecord) throws {
+        guard !isRunning, scheduledDispatchSessionID != record.id, record.status != .running,
+              store != nil, providers.contains(where: { $0.id == record.providerID }) else {
+            throw NSError(domain: "SkynetMobile", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Another turn is running. Wait for it to finish before sending."])
+        }
+        send(prompt, mobileRecord: record, mobileAttachments: attachments)
+        guard activeTurnSessionID == record.id else { throw CocoaError(.userCancelled) }
+    }
+
+    func mobileSave(_ record: SessionRecord) throws {
+        try requireStore().saveSession(record)
+        replace(record)
+    }
+
+    func mobileMessages(for sessionID: SessionID) async throws -> [Message] {
+        let disk = try requireStore()
+        return try await Task.detached(priority: .utility) {
+            try disk.loadMessagesPage(for: sessionID, byteLimit: 512 * 1024).messages
+        }.value
+    }
+
+    func mobileBackendID(for project: Project) -> BackendID { backendID(for: project) }
+
     var connectivityWarning: String? {
         if connectivity.networkAvailable == false {
             return "Network unavailable. Cached sessions remain available; reconnect to send messages."
@@ -178,22 +212,7 @@ final class AppModel {
     }
 
     var filteredProjects: [Project] {
-        let query = normalizedSearchText
-        let visibleProjects = projects.filter { project in
-            guard project.metadata["discovered"] == "true",
-                  project.metadata["pinned"] != "true" else { return true }
-            return sessions.contains {
-                $0.projectID == project.id && $0.isArchived != true
-            }
-        }
-        let matching = query.isEmpty ? visibleProjects : visibleProjects.filter { project in
-            projectMatchesSearch(project, query: query)
-                || sessions.contains {
-                    $0.projectID == project.id && sessionMatchesSearch($0, query: query)
-                }
-        }
-        return matching.filter { $0.metadata["pinned"] == "true" }
-            + matching.filter { $0.metadata["pinned"] != "true" }
+        SessionLibraryQuery.projects(projects, sessions: sessions, query: normalizedSearchText)
     }
 
     func sessions(for project: Project) -> [SessionRecord] {
@@ -201,19 +220,7 @@ final class AppModel {
     }
 
     func filteredSessions(for project: Project) -> [SessionRecord] {
-        let query = normalizedSearchText
-        let projectSessions = sessions(for: project)
-            .filter { $0.isArchived != true }
-            .sorted { lhs, rhs in
-                if (lhs.pinMode != nil) != (rhs.pinMode != nil) {
-                    return lhs.pinMode != nil
-                }
-                return lhs.updatedAt > rhs.updatedAt
-            }
-        guard !query.isEmpty, !projectMatchesSearch(project, query: query) else {
-            return projectSessions
-        }
-        return projectSessions.filter { sessionMatchesSearch($0, query: query) }
+        SessionLibraryQuery.sessions(sessions, in: project, query: normalizedSearchText)
     }
 
     func filteredProjects(for machine: DiscoveredMachine) -> [Project] {
@@ -480,7 +487,7 @@ final class AppModel {
         })
         var deletable: [SessionRecord] = []
         for session in targets {
-            if (isRunning && selectedSessionID == session.id)
+            if (isRunning && activeTurnSessionID == session.id)
                 || scheduledDispatchSessionID == session.id {
                 failures.append("Stop \(session.title ?? "the running session") before deleting it.")
                 continue
@@ -599,9 +606,7 @@ final class AppModel {
                 clearSessionSelection()
             }
             for id in ids {
-                if let url = scratchlistURL(for: id) { try? FileManager.default.removeItem(at: url) }
-                if let url = queueURL(for: id) { try? FileManager.default.removeItem(at: url) }
-                if let url = composerDraftURL(for: id) { try? FileManager.default.removeItem(at: url) }
+                composerStorage.removeSessionFiles(for: id)
             }
             scheduledQueueSessionIDs.subtract(ids)
             return true
@@ -872,15 +877,7 @@ final class AppModel {
     }
 
     func answerPermission(_ decision: PermissionResponse.Decision) {
-        guard let request = pendingPermissionRequest else { return }
-        permissionContinuation?.resume(
-            returning: PermissionResponse(requestID: request.id, decision: decision)
-        )
-        permissionContinuation = nil
-        pendingPermissionRequest = nil
-        pendingPermissionSessionTitle = nil
-        pendingPermissionSessionID = nil
-        permissionRequestToken = nil
+        permissionController.answerPermission(decision)
     }
 
     func attachImage(url: URL) {
@@ -1051,48 +1048,24 @@ final class AppModel {
         }
     }
 
+    private var composerStorage: SessionComposerStorage {
+        .init(rootURL: storageDirectoryURL, blobs: store)
+    }
+
     private func storedAttachments(_ attachments: [ImageAttachment]) throws -> [ImageAttachment] {
-        try attachments.map { attachment in
-            var stored = attachment
-            if case .inline(let data, let mediaType) = stored.payload {
-                guard let store else { throw CocoaError(.fileNoSuchFile) }
-                stored.payload = .blob(try store.storeBlob(
-                    data, mediaType: mediaType, fileName: stored.fileName
-                ))
-            }
-            return stored
-        }
+        try composerStorage.storedAttachments(attachments)
     }
 
     func saveComposerDraft(_ text: String, attachments: [ImageAttachment], for sessionID: SessionID) {
-        guard let url = composerDraftURL(for: sessionID) else { return }
         do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            let draft = ComposerDraft(text: text, attachments: try storedAttachments(attachments))
-            try JSONEncoder().encode(draft).write(to: url, options: .atomic)
+            try composerStorage.saveDraft(text, attachments: attachments, for: sessionID)
         } catch {
             errorMessage = "Could not save composer draft: \(error.localizedDescription)"
         }
     }
 
     func loadComposerDraft(for sessionID: SessionID) -> ComposerDraft? {
-        guard let url = composerDraftURL(for: sessionID),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(ComposerDraft.self, from: data)
-    }
-
-    private func composerDraftURL(for sessionID: SessionID) -> URL? {
-        storageDirectoryURL?
-            .appendingPathComponent("composer-drafts", isDirectory: true)
-            .appendingPathComponent("\(sessionID.value.uuidString).json")
-    }
-
-    private func queueURL(for sessionID: SessionID) -> URL? {
-        storageDirectoryURL?
-            .appendingPathComponent("message-queues", isDirectory: true)
-            .appendingPathComponent("\(sessionID.value.uuidString).json")
+        composerStorage.loadDraft(for: sessionID)
     }
 
     private func loadQueue(for sessionID: SessionID) {
@@ -1100,20 +1073,11 @@ final class AppModel {
     }
 
     private func queueEntries(for sessionID: SessionID) -> [QueuedPrompt] {
-        guard let url = queueURL(for: sessionID),
-              let data = try? Data(contentsOf: url),
-              let entries = try? JSONDecoder().decode([QueuedPrompt].self, from: data) else {
-            return []
-        }
-        return Array(entries.prefix(100))
+        composerStorage.queueEntries(for: sessionID)
     }
 
     private func persistQueue(_ entries: [QueuedPrompt], for sessionID: SessionID) throws {
-        guard let url = queueURL(for: sessionID) else { throw CocoaError(.fileNoSuchFile) }
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try JSONEncoder().encode(entries).write(to: url, options: .atomic)
+        try composerStorage.persistQueue(entries, for: sessionID)
         if entries.contains(where: { $0.scheduledAt != nil && $0.dispatchStartedAt == nil }) {
             scheduledQueueSessionIDs.insert(sessionID)
         } else {
@@ -1228,22 +1192,18 @@ final class AppModel {
         }
     }
 
-    private func scratchlistURL(for sessionID: SessionID) -> URL? {
-        storageDirectoryURL?
-            .appendingPathComponent("scratchlists", isDirectory: true)
-            .appendingPathComponent("\(sessionID.value.uuidString).json")
-    }
 
-    func send(_ prompt: String, queuedEntry: QueuedPrompt? = nil) {
-        guard !isRunning, let store, let record = selectedSession,
+    func send(_ prompt: String, queuedEntry: QueuedPrompt? = nil,
+              mobileRecord: SessionRecord? = nil, mobileAttachments: [ImageAttachment]? = nil) {
+        guard !isRunning, let store, let record = mobileRecord ?? selectedSession,
               let provider = providers.first(where: { $0.id == record.providerID }) else { return }
         guard scheduledDispatchSessionID != record.id else {
             errorMessage = "A scheduled message is already sending in this session."
             return
         }
-        let attachments = pendingAttachments
+        let attachments = mobileAttachments ?? pendingAttachments
         let referenceSessions = sessions
-        pendingAttachments = []
+        if mobileAttachments == nil { pendingAttachments = [] }
         resetLiveState(for: record.id)
         isRunning = true
         activeTurnSessionID = record.id
@@ -1263,6 +1223,7 @@ final class AppModel {
                 liveStatusText = nil
                 streamTask = nil
                 if Task.isCancelled { liveTools.removeAll() }
+                mobileRelay.finishTurn(for: record.id)
                 let steeredID = steeringQueuedPromptID
                 steeringQueuedPromptID = nil
                 if let steeredID,
@@ -1314,26 +1275,27 @@ final class AppModel {
                         failed: { error, started in
                             self.handleTurnFailure(error, didStartTurn: started,
                                                    record: record, attachments: attachments,
-                                                   queuedEntry: queuedEntry)
+                                                   queuedEntry: queuedEntry, restoreDraft: mobileAttachments == nil)
                         }
                     )
                 )
             } catch {
                 // The executor consumes turn errors; only pre-turn setup can throw here.
                 handleTurnFailure(error, didStartTurn: false,
-                                  record: record, attachments: attachments, queuedEntry: queuedEntry)
+                                  record: record, attachments: attachments, queuedEntry: queuedEntry,
+                                  restoreDraft: mobileAttachments == nil)
             }
         }
     }
 
     private func handleTurnFailure(
         _ error: Error, didStartTurn: Bool, record: SessionRecord,
-        attachments: [ImageAttachment], queuedEntry: QueuedPrompt?
+        attachments: [ImageAttachment], queuedEntry: QueuedPrompt?, restoreDraft: Bool = true
     ) {
         if !(error is CancellationError), steeringQueuedPromptID == nil {
             errorMessage = error.localizedDescription
         }
-        if !didStartTurn, queuedEntry == nil, selectedSessionID == record.id {
+        if restoreDraft, !didStartTurn, queuedEntry == nil, selectedSessionID == record.id {
             pendingAttachments.insert(contentsOf: attachments, at: 0)
         }
     }
@@ -1419,6 +1381,7 @@ final class AppModel {
     }
 
     private func apply(_ event: AgentEvent, sessionID: SessionID) {
+        mobileRelay.receive(event, for: sessionID)
         switch event {
         case .textDelta(let text): liveText += text
         case .thinkingDelta(let text): liveThinking += text
@@ -1481,15 +1444,6 @@ final class AppModel {
         sessions.sort { $0.updatedAt > $1.updatedAt }
     }
 
-    private func projectMatchesSearch(_ project: Project, query: String) -> Bool {
-        project.name.localizedCaseInsensitiveContains(query)
-            || (project.rootPath?.localizedCaseInsensitiveContains(query) ?? false)
-    }
-
-    private func sessionMatchesSearch(_ session: SessionRecord, query: String) -> Bool {
-        (session.title ?? "New session").localizedCaseInsensitiveContains(query)
-    }
-
     private func mergeDiscovery(_ snapshots: [MachineSessionSnapshot]) throws {
         guard let store else { return }
         machines = snapshots.map(\.machine)
@@ -1499,135 +1453,16 @@ final class AppModel {
             }
         )
 
-        var sessionIndexes: [DiscoverySessionKey: Int] = [:]
-        for (index, session) in sessions.enumerated() {
-            let key = DiscoverySessionKey(session: session)
-            if sessionIndexes[key] == nil { sessionIndexes[key] = index }
-        }
-        for snapshot in snapshots {
-            var importedKeys = Set<DiscoverySessionKey>()
-            for discovered in snapshot.sessions.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-                let key = DiscoverySessionKey(
-                    backendID: snapshot.machine.id,
-                    providerID: discovered.providerID,
-                    resumeToken: discovered.providerSessionID
-                )
-                guard importedKeys.insert(key).inserted,
-                      !deletedDiscoveryKeys.contains(key) else { continue }
-                let project = project(
-                    for: discovered.workingDirectory,
-                    backendID: snapshot.machine.id
-                )
-                let existingIndex = sessionIndexes[key]
-                var record = existingIndex.map { sessions[$0] } ?? SessionRecord(
-                    projectID: project.id,
-                    providerID: discovered.providerID,
-                    modelID: discovered.modelID,
-                    title: discovered.title,
-                    backendID: snapshot.machine.id,
-                    workingDirectory: discovered.workingDirectory,
-                    createdAt: discovered.createdAt,
-                    updatedAt: discovered.updatedAt,
-                    providerResumeToken: discovered.providerSessionID
-                )
-                let previousUpdatedAt = record.updatedAt
-                let previousMessageCount = record.messageCount
-                record.projectID = project.id
-                record.modelID = record.modelID ?? discovered.modelID
-                record.backendID = snapshot.machine.id
-                record.workingDirectory = discovered.workingDirectory
-                record.providerResumeToken = discovered.providerSessionID
-                record.updatedAt = max(record.updatedAt, discovered.updatedAt)
-                if discovered.totalUsage.totalTokens != nil {
-                    record.totalUsage = discovered.totalUsage
-                }
-                if record.title == nil { record.title = discovered.title }
-                let isRemote = snapshot.machine.id != DiscoveredMachine.local.id
-                let shouldReplaceMessages = existingIndex == nil
-                    || (isRemote
-                        ? discovered.messages.count > record.messageCount
-                        : discovered.messages.count > record.messageCount
-                            || (discovered.messages.count == record.messageCount
-                                && previousUpdatedAt < discovered.updatedAt))
-                if existingIndex != nil,
-                   selectedSessionID != record.id,
-                   discovered.messages.count > previousMessageCount,
-                   discovered.messages.dropFirst(previousMessageCount).contains(where: {
-                       $0.origin == .agent && !$0.plainText.isEmpty
-                   }) {
-                    record.markedUnreadAt = discovered.updatedAt
-                }
-                var needsImageUpgrade = false
-                if !shouldReplaceMessages,
-                   discovered.messages.contains(where: Self.containsImage) {
-                    needsImageUpgrade = !(try store.loadMessages(for: record.id))
-                        .contains(where: Self.containsImage)
-                }
-                if !discovered.messages.isEmpty, shouldReplaceMessages || needsImageUpgrade {
-                    record.messageCount = discovered.messages.count
-                    let messages = try SessionTranscriptController.persistableMessages(discovered.messages, store: store)
-                    try store.replaceMessages(messages, for: record.id)
-                }
-                try store.saveSession(record)
-                if let existingIndex {
-                    sessions[existingIndex] = record
-                } else {
-                    sessions.append(record)
-                    sessionIndexes[key] = sessions.endIndex - 1
-                }
-            }
-        }
-        try store.saveProjects(projects)
-        sessions.sort { $0.updatedAt > $1.updatedAt }
+        try SessionDiscoveryRegistry.merge(
+            snapshots, projects: &projects, sessions: &sessions,
+            deletedKeys: deletedDiscoveryKeys, selectedSessionID: selectedSessionID, store: store
+        )
         if selectedProjectID == nil {
             selectedProjectID = projects.first?.id
         }
         if let selectedSessionID, !isLoadingOlderTranscript {
             loadTranscript(for: selectedSessionID, preservePagination: true)
         }
-    }
-
-    private static func containsImage(_ message: Message) -> Bool {
-        message.content.contains { if case .image = $0 { true } else { false } }
-    }
-
-    private struct DiscoverySessionKey: Hashable, Codable {
-        let backendID: BackendID?
-        let providerID: ProviderID
-        let resumeToken: String?
-
-        init(backendID: BackendID?, providerID: ProviderID, resumeToken: String?) {
-            self.backendID = backendID
-            self.providerID = providerID
-            self.resumeToken = resumeToken
-        }
-
-        init(session: SessionRecord) {
-            self.init(
-                backendID: session.backendID,
-                providerID: session.providerID,
-                resumeToken: session.providerResumeToken
-            )
-        }
-    }
-
-    private func project(for rootPath: String?, backendID: BackendID) -> Project {
-        if let existing = projects.first(where: {
-            $0.rootPath == rootPath && self.backendID(for: $0) == backendID
-        }) {
-            return existing
-        }
-        let name = rootPath.map {
-            let component = URL(fileURLWithPath: $0).lastPathComponent
-            return component.isEmpty ? $0 : component
-        } ?? "Conversations"
-        let project = Project(
-            name: name,
-            rootPath: rootPath,
-            metadata: ["backendID": backendID.rawValue, "discovered": "true"]
-        )
-        projects.append(project)
-        return project
     }
 
     func executionBackend(for record: SessionRecord) -> any ExecutionBackend {
@@ -1650,36 +1485,7 @@ final class AppModel {
     private func requestPermission(
         _ request: PermissionRequest, sessionID: SessionID, sessionTitle: String? = nil
     ) async -> PermissionResponse {
-        guard !Task.isCancelled else {
-            return PermissionResponse(requestID: request.id, decision: .deny,
-                                      reason: "The permission request was cancelled.")
-        }
-        if let pendingPermissionRequest {
-            permissionContinuation?.resume(
-                returning: PermissionResponse(
-                    requestID: pendingPermissionRequest.id,
-                    decision: .deny,
-                    reason: "A newer permission request replaced this request."
-                )
-            )
-        }
-        let token = UUID()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                pendingPermissionRequest = request
-                pendingPermissionSessionTitle = sessionTitle
-                pendingPermissionSessionID = sessionID
-                permissionRequestToken = token
-                permissionContinuation = continuation
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                // Providers can reuse request IDs. Only this exact installed
-                // continuation may be denied by its cancellation callback.
-                guard let self, self.permissionRequestToken == token else { return }
-                self.answerPermission(.deny)
-            }
-        }
+        await permissionController.request(request, sessionID: sessionID, sessionTitle: sessionTitle)
     }
 
     private var transcriptHooks: SessionTranscriptController.Hooks {
@@ -1735,50 +1541,5 @@ private struct AppPermissionResponder: PermissionResponder {
 
     func decide(_ request: PermissionRequest) async -> PermissionResponse {
         await handler(request)
-    }
-}
-
-private enum ComposerImageImport {
-    static func load(url: URL) throws -> ImageAttachment {
-        let data = try Data(contentsOf: url)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let type = CGImageSourceGetType(source) else {
-            throw ImportError.invalidImage(url.lastPathComponent)
-        }
-        // Detect the bytes, not the extension. Keep supported representations
-        // intact (including GIF animation); normalize other native formats.
-        let mediaType: String
-        switch type as String {
-        case "public.png": mediaType = "image/png"
-        case "public.jpeg": mediaType = "image/jpeg"
-        case "com.compuserve.gif": mediaType = "image/gif"
-        case "org.webmproject.webp": mediaType = "image/webp"
-        default:
-            // Full-size transformed decoding preserves the displayed photo
-            // orientation when converting away from EXIF-carrying formats.
-            // No maximum size is supplied, so this does not downsample.
-            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-            ] as CFDictionary),
-                let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
-                throw ImportError.invalidImage(url.lastPathComponent)
-            }
-            return ImageAttachment(data: png, mediaType: "image/png", fileName: url.lastPathComponent)
-        }
-        guard CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
-            throw ImportError.invalidImage(url.lastPathComponent)
-        }
-        return ImageAttachment(data: data, mediaType: mediaType, fileName: url.lastPathComponent)
-    }
-
-    private enum ImportError: LocalizedError {
-        case invalidImage(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .invalidImage(let name): "\(name) is not a readable image."
-            }
-        }
     }
 }

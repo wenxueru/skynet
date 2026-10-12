@@ -33,7 +33,12 @@ sources=(${sources:#*/SkynetMacApp.swift})
 xcrun swiftc -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos14.0" \
     -I "$core_bin/Modules" -module-cache-path "$demo_dir/ModuleCache" \
     "${sources[@]}" "$demo_dir/DemoModel.swift" "$core_bin"/SkynetCore.build/*.o \
+    "$core_bin"/SkynetMobile.build/*.o \
     -o "$bundle/MacOS/SkynetReadmeDemo"
+if [[ ${SKYNET_DEMO_BUILD_ONLY:-0} == 1 ]]; then
+    print "Demo renderer compiled: $bundle/MacOS/SkynetReadmeDemo"
+    exit 0
+fi
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.skynetresearch.readme-demo' "$bundle/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string SkynetReadmeDemo' "$bundle/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :LSUIElement bool true' "$bundle/Info.plist"

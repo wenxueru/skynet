@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Regular-width (iPad) sidebar: the same machine/project library, with the

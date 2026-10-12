@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// The polished bottom composer: configuration controls (model, effort,
@@ -146,8 +147,10 @@ struct ComposerView: View {
             ) {
                 ForEach(PermissionMode.allCases) { mode in
                     Text(mode.displayName).tag(mode)
+                        .disabled(mode != .askForEverything)
                 }
             }
+            Text("Permission policy is controlled on your Mac.")
         } label: {
             controlLabel(
                 icon: "lock.shield",

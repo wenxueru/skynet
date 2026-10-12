@@ -16,12 +16,15 @@ let package = Package(
     ],
     products: [
         .library(name: "SkynetCore", targets: ["SkynetCore"]),
+        .library(name: "SkynetMobile", targets: ["SkynetMobile"]),
         // Doubles are shipped as their own product so app-level unit tests can
         // drive the same fakes the core package tests use.
         .library(name: "SkynetCoreDoubles", targets: ["SkynetCoreDoubles"]),
     ],
     targets: [
         .target(name: "SkynetCore"),
+        .target(name: "SkynetMobile"),
+        .testTarget(name: "SkynetMobileTests", dependencies: ["SkynetMobile"]),
         .target(
             name: "SkynetCoreDoubles",
             dependencies: ["SkynetCore"]

@@ -14,11 +14,12 @@ final class PermissionHarness {
     var activeSession: AgentSession?
     var scheduledDispatch: Task<Void, Never>?
     var streamTask: Task<Void, Never>?
-    var pendingPermissionRequest: PermissionRequest?
-    var pendingPermissionSessionTitle: String?
-    var pendingPermissionSessionID: SessionID?
-    var permissionContinuation: CheckedContinuation<PermissionResponse, Never>?
-    var permissionRequestToken: UUID?
+    private let permissionController = SessionPermissionController()
+    var pendingPermissionRequest: PermissionRequest? { permissionController.pendingPermissionRequest }
+    var pendingPermissionSessionTitle: String? { permissionController.pendingPermissionSessionTitle }
+    var pendingPermissionSessionID: SessionID? { permissionController.pendingPermissionSessionID }
+    var permissionContinuation: Bool? { permissionController.hasPendingContinuation ? true : nil }
+    var permissionRequestToken: UUID? { permissionController.permissionRequestToken }
     var responses: [PermissionResponse] = []
     var events: [AgentEvent] = []
     var consumerFinished = false

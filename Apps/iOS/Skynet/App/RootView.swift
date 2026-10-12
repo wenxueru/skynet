@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Root view: adapts to size class, forwards scene phase, and hosts the

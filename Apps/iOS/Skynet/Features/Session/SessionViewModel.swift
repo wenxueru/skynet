@@ -1,7 +1,8 @@
+import SkynetMobile
 import Foundation
 
 /// Owns one open session: folds relay events into transcript items, drives
-/// turn state, permission auto-approval, queued prompts, notifications, and
+/// turn state, explicit approvals, queued prompts, notifications, and
 /// live activities. The transcript is relay-authoritative — local sends never
 /// insert items, the relay echoes them, so there are no duplicates.
 ///
@@ -37,6 +38,12 @@ public final class SessionViewModel: ComposerStateProviding {
 
     private var eventsTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var modelsTask: Task<Void, Never>?
+    private var queueFlushTask: Task<Void, Never>?
+    private var observationGeneration = 0
+    private var hasSnapshot = false
+    private var snapshotError: String?
+    private var queueRequiresReview = false
 
     public private(set) var availableModels: [AgentModel] = []
 
@@ -66,27 +73,29 @@ public final class SessionViewModel: ComposerStateProviding {
     /// Idempotent; pair with `stop()` when the screen goes away for good.
     public func start() {
         guard eventsTask == nil else { return }
+        observationGeneration += 1
         let sessionID = currentSession.id
 
         eventsTask = Task { [weak self] in
             guard let self else { return }
             for await event in self.relay.sessionEvents(for: sessionID) {
+                guard !Task.isCancelled else { break }
                 await self.handle(event)
             }
         }
         reconnectTask = Task { [weak self] in
             guard let self else { return }
             for await connected in self.monitor.connectedEvents() where connected {
+                guard !Task.isCancelled else { break }
                 self.flushQueue()
             }
         }
 
-        Task { [weak self] in
+        modelsTask = Task { [weak self] in
             guard let self else { return }
             if let models = try? await self.relay.availableModels(), !models.isEmpty {
+                guard !Task.isCancelled else { return }
                 self.availableModels = models
-            } else {
-                self.availableModels = AgentModel.defaultCatalog
             }
         }
     }
@@ -94,10 +103,15 @@ public final class SessionViewModel: ComposerStateProviding {
     /// Stops observing. Must be called explicitly — `deinit` cannot touch
     /// main-actor state.
     public func stop() {
+        observationGeneration += 1
         eventsTask?.cancel()
         eventsTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
+        modelsTask?.cancel()
+        modelsTask = nil
+        queueFlushTask?.cancel()
+        queueFlushTask = nil
     }
 
     /// Tracks screen visibility for unread counts and notification clearing.
@@ -114,9 +128,32 @@ public final class SessionViewModel: ComposerStateProviding {
     private func handle(_ event: SessionEvent) async {
         switch event {
         case .snapshot(let session, let items):
+            let previousState = currentSession.state
+            let previousPending = Set(self.items.compactMap { item -> TranscriptItemID? in
+                if case .permissionRequest(let request) = item, request.isPending { return request.id }
+                return nil
+            })
             currentSession = session
             self.items = items
             isLoadingSnapshot = false
+            clearSnapshotError()
+            if hasSnapshot {
+                currentSession.state = previousState
+                await applyTurnState(session.state)
+                for item in items {
+                    if case .permissionRequest(let request) = item,
+                       request.isPending, !previousPending.contains(request.id) {
+                        notifications.permissionRequested(session: session, request: request)
+                    }
+                }
+            }
+            hasSnapshot = true
+            if session.state == .idle { flushQueue() }
+
+        case .loadFailed(let detail):
+            isLoadingSnapshot = false
+            snapshotError = "Couldn't update the conversation. \(detail)"
+            errorBanner = snapshotError
 
         case .itemAppended(let item):
             upsert(item)
@@ -145,9 +182,13 @@ public final class SessionViewModel: ComposerStateProviding {
             upsert(.toolCall(record))
 
         case .permissionUpdated(let record):
+            let wasPending = items.contains {
+                if case .permissionRequest(let old) = $0 { return old.id == record.id && old.isPending }
+                return false
+            }
             upsert(.permissionRequest(record))
-            if record.isPending {
-                maybeAutoResolve(record)
+            if record.isPending && !wasPending {
+                notifications.permissionRequested(session: currentSession, request: record)
             }
 
         case .turnStateChanged(let state):
@@ -157,8 +198,17 @@ public final class SessionViewModel: ComposerStateProviding {
             currentSession.title = title
 
         case .sessionUpdated(let session):
+            clearSnapshotError()
+            let previousState = currentSession.state
             currentSession = session
+            currentSession.state = previousState
+            await applyTurnState(session.state)
         }
+    }
+
+    private func clearSnapshotError() {
+        if errorBanner == snapshotError { errorBanner = nil }
+        snapshotError = nil
     }
 
     private func upsert(_ item: TranscriptItem) {
@@ -189,6 +239,7 @@ public final class SessionViewModel: ComposerStateProviding {
     private func applyTurnState(_ state: TurnState) async {
         let previous = currentSession.state
         currentSession.state = state
+        guard previous != state else { return }
 
         switch state {
         case .running:
@@ -198,14 +249,18 @@ public final class SessionViewModel: ComposerStateProviding {
             )
         case .idle:
             await liveActivities.endTurnActivity(sessionID: currentSession.id)
-            if previous.isBusy {
+            if previous == .running || previous == .awaitingPermission {
                 notifications.turnFinished(session: currentSession, summary: latestAssistantText)
             }
             flushQueue()
         case .awaitingPermission:
             await liveActivities.updateTurnActivity(state: state, summary: latestAssistantText)
-        case .canceling, .failed:
+        case .canceling:
+            queueRequiresReview = true
             await liveActivities.updateTurnActivity(state: state, summary: latestAssistantText)
+        case .failed:
+            queueRequiresReview = true
+            await liveActivities.endTurnActivity(sessionID: currentSession.id)
         }
     }
 
@@ -220,54 +275,16 @@ public final class SessionViewModel: ComposerStateProviding {
 
     // MARK: - Permissions
 
-    private func maybeAutoResolve(_ record: PermissionRequestRecord) {
-        guard record.isPending else { return }
-        if let automatic = PermissionEvaluator.automaticDecision(
-            scope: record.scope,
-            mode: currentSession.configuration.permissions
-        ) {
-            // The relay echoes the resolved record; nothing to do locally
-            // until it lands.
-            Task { [weak self] in
-                guard let self else { return }
-                try? await self.relay.resolvePermission(
-                    record.id,
-                    decision: automatic,
-                    in: self.currentSession.id
-                )
-            }
-        } else {
-            notifications.permissionRequested(session: currentSession, request: record)
-        }
-    }
-
-    /// Answers a permission request. Choosing "Always allow" escalates the
-    /// session's permission mode so future requests of this kind skip asking.
+    /// Answers only this Mac-issued request; device UI never escalates policy.
     public func resolve(_ record: PermissionRequestRecord, decision: PermissionDecision) async {
+        guard decision != .approvedAlways else {
+            errorBanner = "Persistent approval is available on your Mac."
+            return
+        }
         do {
             try await relay.resolvePermission(record.id, decision: decision, in: currentSession.id)
         } catch {
             errorBanner = "Couldn't record your answer. \(error.localizedDescription)"
-            return
-        }
-
-        let nextMode = PermissionEvaluator.modeAfter(
-            decision: decision,
-            current: currentSession.configuration.permissions
-        )
-        guard nextMode != currentSession.configuration.permissions else { return }
-        do {
-            try await relay.updateConfiguration(
-                AgentConfiguration(
-                    model: currentSession.configuration.model,
-                    effort: currentSession.configuration.effort,
-                    permissions: nextMode
-                ),
-                for: currentSession.id
-            )
-            currentSession.configuration.permissions = nextMode
-        } catch {
-            Log.session.error("Permission escalation failed: \(error.localizedDescription)")
         }
     }
 
@@ -289,6 +306,10 @@ public final class SessionViewModel: ComposerStateProviding {
     }
 
     public func composerDidChangeConfiguration(_ configuration: AgentConfiguration) {
+        guard configuration.permissions == .askForEverything else {
+            errorBanner = "Permission policy is controlled on your Mac. Mobile requests use Ask Always."
+            return
+        }
         Task {
             do {
                 try await relay.updateConfiguration(configuration, for: currentSession.id)
@@ -320,7 +341,7 @@ public final class SessionViewModel: ComposerStateProviding {
             Log.composer.info("Prompt queued: offline")
             return
         }
-        guard currentSession.state.acceptsNewPrompt else {
+        guard hasSnapshot, currentSession.state.acceptsNewPrompt, !isSending, !queue.isFlushing else {
             queue.enqueue(payload, reason: .turnBusy)
             Log.composer.info("Prompt queued: turn busy")
             return
@@ -330,24 +351,42 @@ public final class SessionViewModel: ComposerStateProviding {
         defer { isSending = false }
         do {
             try await relay.sendPrompt(payload, to: currentSession.id)
+            queueRequiresReview = false
+            await applyTurnState(.running)
         } catch {
-            errorBanner = "Couldn't send — the prompt is queued and will retry."
+            queueRequiresReview = true
+            errorBanner = "Couldn't confirm delivery. The prompt is queued for review. \(error.localizedDescription)"
             Log.composer.error("Send failed: \(error.localizedDescription)")
             queue.enqueue(payload, reason: .offline)
         }
     }
 
     private func flushQueue() {
-        guard !queue.isEmpty else { return }
-        Task { [weak self] in
-            guard let self else { return }
+        guard eventsTask != nil, queueFlushTask == nil,
+              !queue.isEmpty, hasSnapshot, !queueRequiresReview else { return }
+        let generation = observationGeneration
+        queueFlushTask = Task { [weak self] in
+            guard let self, !Task.isCancelled, generation == self.observationGeneration else { return }
+            defer {
+                if generation == self.observationGeneration { self.queueFlushTask = nil }
+            }
             await self.queue.flush(
                 shouldSend: {
-                    self.currentConnectionState.isConnected
-                        && self.currentSession.state.acceptsNewPrompt
+                    !Task.isCancelled && generation == self.observationGeneration
+                        && self.eventsTask != nil && self.currentConnectionState.isConnected
+                        && self.currentSession.state == .idle && !self.isSending
+                        && !self.queueRequiresReview
                 },
                 send: { prompt in
-                    try await self.relay.sendPrompt(prompt.payload, to: self.currentSession.id)
+                    do {
+                        try await self.relay.sendPrompt(prompt.payload, to: self.currentSession.id)
+                        if generation == self.observationGeneration, !Task.isCancelled {
+                            await self.applyTurnState(.running)
+                        }
+                    } catch {
+                        self.queueRequiresReview = true
+                        throw error
+                    }
                 }
             )
         }
@@ -358,6 +397,7 @@ public final class SessionViewModel: ComposerStateProviding {
     public func cancelTurn() async {
         guard currentSession.state.isBusy, !isCanceling else { return }
         isCanceling = true
+        queueRequiresReview = true
         defer { isCanceling = false }
         do {
             try await relay.cancelCurrentTurn(in: currentSession.id)

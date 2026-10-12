@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Shared, app-scoped view of "is the UI in front of the user right now".

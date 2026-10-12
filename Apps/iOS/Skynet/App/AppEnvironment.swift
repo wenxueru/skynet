@@ -1,11 +1,9 @@
+import SkynetMobile
 import Foundation
 import SwiftUI
 import UserNotifications
 
-/// Composition root. Everything transport-shaped is a protocol so the
-/// integration layer can swap in the real paired-Mac relay (or a SkynetCore
-/// bridge) without touching feature code. `live()` provides safe
-/// placeholders until that wiring exists.
+/// Composition root for the authenticated paired-Mac relay and platform services.
 @MainActor
 @Observable
 public final class AppEnvironment {
@@ -41,15 +39,7 @@ public final class AppEnvironment {
         AppGlue.environment = self
     }
 
-    /// Production composition. Pass overrides when integrating the real
-    /// transport:
-    ///
-    /// ```swift
-    /// AppEnvironment.live(
-    ///     relay: MyPairedMacRelay(...),
-    ///     pairing: RelayPairingService(...)
-    /// )
-    /// ```
+    /// Production composition; optional overrides support previews and tests.
     public static func live(
         relay: (any SkynetRelay)? = nil,
         pairing: (any PairingService)? = nil,
@@ -58,18 +48,20 @@ public final class AppEnvironment {
         liveActivities: (any LiveActivityPresenting)? = nil,
         push: (any PushTokenRegistrar)? = nil
     ) -> AppEnvironment {
-        AppEnvironment(
-            relay: relay ?? UnpairedRelay(),
-            pairing: pairing ?? UnconfiguredPairingService(),
-            machineStore: machineStore ?? KeychainPairedMachineStore(),
+        let store = machineStore ?? KeychainPairedMachineStore()
+        let network = NetworkSkynetRelay(store: store)
+        return AppEnvironment(
+            relay: relay ?? network,
+            pairing: pairing ?? network,
+            machineStore: store,
             notifications: notifications ?? UserNotificationsScheduler(),
             liveActivities: liveActivities ?? NoopLiveActivityPresenter(),
             push: push ?? NoopPushTokenRegistrar()
         )
     }
 
-    /// Launch-time setup: connection observation, notification permission,
-    /// push registration, tap routing. Called once from the root view.
+    /// Launch-time setup: foreground connection observation, notification
+    /// permission and tap routing. There is no background synchronization service.
     public func bootstrap() async {
         monitor.start()
         UNUserNotificationCenter.current().delegate = NotificationTapRouter.shared

@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Sessions of one project, with search, creation, rename, and delete.

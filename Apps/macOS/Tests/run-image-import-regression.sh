@@ -10,8 +10,12 @@ fi
 function image_import_source() {
     if [[ $image_source_mode == index ]]; then
         git show :Apps/macOS/Skynet/AppModel.swift
+        if git cat-file -e :Apps/macOS/Skynet/ComposerImageImport.swift 2>/dev/null; then
+            git show :Apps/macOS/Skynet/ComposerImageImport.swift
+        fi
     else
         /bin/cat Apps/macOS/Skynet/AppModel.swift
+        /bin/cat Apps/macOS/Skynet/ComposerImageImport.swift
     fi
 }
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
@@ -23,7 +27,7 @@ awk 'FNR==NR {
     if(/^    func attachImage\(url:/) {print "@MainActor final class ImageImportHarness { var pendingAttachments: [ImageAttachment] = []; var errorMessage: String?"; methods=1}
     if(/^    func imageData\(/) {print "}"; methods=0}
     if(methods) print;
-    if(/^private enum ComposerImageImport/) helper=1;
+    if(/^(private )?enum ComposerImageImport/) helper=1;
     if(helper) print;
     next
 }{print}' <(image_import_source) Apps/macOS/Tests/ImageImportRegression.swift |

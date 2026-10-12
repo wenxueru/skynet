@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Holds prompts that are waiting to be sent, and flushes them in FIFO order

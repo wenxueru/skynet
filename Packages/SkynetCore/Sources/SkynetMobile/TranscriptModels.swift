@@ -2,7 +2,7 @@ import Foundation
 
 /// A single element of a session transcript. Modeled as an enum so the UI can
 /// switch exhaustively over row kinds while each payload stays a plain value.
-public enum TranscriptItem: Identifiable, Hashable, Sendable {
+public enum TranscriptItem: Codable, Identifiable, Hashable, Sendable {
     case userMessage(UserMessage)
     case assistantMessage(AssistantMessage)
     case toolCall(ToolCallRecord)
@@ -46,7 +46,7 @@ public enum TranscriptItem: Identifiable, Hashable, Sendable {
 }
 
 /// Delivery state of an outgoing user message.
-public enum MessageDeliveryState: Hashable, Sendable {
+public enum MessageDeliveryState: Codable, Hashable, Sendable {
     case sending
     case delivered
     /// Held locally until the connection or the running turn frees up.
@@ -54,7 +54,7 @@ public enum MessageDeliveryState: Hashable, Sendable {
     case failed(reason: String)
 }
 
-public struct UserMessage: Identifiable, Hashable, Sendable {
+public struct UserMessage: Codable, Identifiable, Hashable, Sendable {
     public let id: TranscriptItemID
     public var text: String
     public var attachments: [ImageAttachment]
@@ -77,7 +77,7 @@ public struct UserMessage: Identifiable, Hashable, Sendable {
 }
 
 /// A streaming or completed assistant reply.
-public struct AssistantMessage: Identifiable, Hashable, Sendable {
+public struct AssistantMessage: Codable, Identifiable, Hashable, Sendable {
     public let id: TranscriptItemID
     public var text: String
     /// True while deltas are still arriving for this message.
@@ -130,7 +130,7 @@ public enum ToolCallState: String, Codable, Sendable {
 }
 
 /// A tool invocation by the agent: command, file edit, search, and so on.
-public struct ToolCallRecord: Identifiable, Hashable, Sendable {
+public struct ToolCallRecord: Codable, Identifiable, Hashable, Sendable {
     public let id: TranscriptItemID
     /// Human title, e.g. "npm test" or "Edit SessionView.swift".
     public var title: String
@@ -173,7 +173,7 @@ public struct ToolCallRecord: Identifiable, Hashable, Sendable {
 }
 
 /// A permission request surfaced inline in the transcript.
-public struct PermissionRequestRecord: Identifiable, Hashable, Sendable {
+public struct PermissionRequestRecord: Codable, Identifiable, Hashable, Sendable {
     public let id: TranscriptItemID
     public var summary: String
     public var detail: String?
@@ -207,7 +207,7 @@ public enum NoticeSeverity: String, Codable, Sendable {
     case error
 }
 
-public struct SystemNotice: Identifiable, Hashable, Sendable {
+public struct SystemNotice: Codable, Identifiable, Hashable, Sendable {
     public let id: TranscriptItemID
     public var text: String
     public var severity: NoticeSeverity
@@ -230,7 +230,7 @@ public struct SystemNotice: Identifiable, Hashable, Sendable {
 ///
 /// Measured in characters and newlines rather than rendered lines so the
 /// decision is deterministic and testable without layout.
-public struct LongMessagePolicy: Sendable {
+public struct LongMessagePolicy: Codable, Sendable {
     public var characterLimit: Int
     public var lineLimit: Int
 

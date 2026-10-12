@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Renders one transcript item by kind. Row layout mirrors chat apps:

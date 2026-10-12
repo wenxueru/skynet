@@ -54,6 +54,10 @@ final class ScheduledModelHarness {
     var permissionAnswers = 0
     var transcriptLoads: [SessionID] = []
     var appliedEvents: [AgentEvent] = []
+    struct MobileActivitySink {
+        func finishTurn(for id: SessionID) {}
+    }
+    let mobileRelay = MobileActivitySink()
 
     init(store: JSONDiskStore, root: URL, record: SessionRecord, backend: any ExecutionBackend) {
         self.store = store

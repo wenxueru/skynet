@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Small sheet for renaming a session. Keeps its own draft so canceling is

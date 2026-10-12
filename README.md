@@ -38,10 +38,7 @@ Use **Steer** when priorities change, or reorder the waiting messages.
 
 </details>
 
-> These images render the actual macOS SwiftUI views with isolated sample data.
-> The GIF is an offline, scripted UI walkthrough—not a recording of live provider execution.
-> No private conversations, credentials or real remote hosts are included.
-> Demo assets use standard sRGB color; device profiles and source metadata are not copied.
+> The demo uses production SwiftUI views with scripted sample data, not live provider execution.
 
 ## What you can do
 
@@ -119,7 +116,6 @@ zsh Design/render-readme-demo.sh
 
 The renderer uses production views with an isolated model. It does not open the installed
 App, load its session store, discover remote hosts or send provider messages.
-Verified App updates replace the installed copy directly, without old-version backups.
 
 </details>
 
@@ -129,14 +125,24 @@ Verified App updates replace the installed copy directly, without old-version ba
 | --- | --- |
 | `SkynetMac` | Native macOS client with local/SSH CLI execution |
 | `SkynetCore` | Shared provider, execution, transcript and persistence logic |
+| `SkynetMobile` | Phone models, pairing credentials and encrypted relay protocol |
 | `Skynet` | iOS/iPadOS client and relay contracts; never launches CLIs itself |
 
-macOS is the current focus. Production relay transport is **not configured by default**;
-paired-device end-to-end operation is not presented as a completed feature.
+### iPhone and iPad
+
+Build the `Skynet` scheme for an iPhone or iPad running iOS 18 or later.
+On your Mac, open **Settings → Mobile Access**, enable access, and select the projects
+you want to share. Scan the invitation in the iOS app and enter the six-digit code
+shown on the Mac.
+
+Keep both devices on the same network (or a private VPN), with Skynet open and the Mac
+awake. The phone can browse recent conversations, send prompts and image attachments,
+queue follow-ups, stop turns, and answer individual approval requests. Agent execution
+and permission policy stay on the Mac. One Mac can be paired in the iOS app at a time.
+Mobile access is off by default and can be revoked from Mac settings.
 
 Read the [architecture boundaries](docs/architecture.md) and
 [migration scope](docs/hapi_migration_audit.md) for implementation details.
-Agent memory, QA status and debug history stay local and out of Git.
 
 Before contributing, enable the staged-file privacy check with
 `git config --local core.hooksPath .githooks`. CI also scans reachable Git history.

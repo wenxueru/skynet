@@ -1,11 +1,14 @@
 import Foundation
 
 /// A prompt ready to be handed to the relay.
-public struct PromptPayload: Equatable, Sendable {
+public struct PromptPayload: Codable, Equatable, Sendable {
+    /// Retained through offline queue retries so an uncertain RPC is not sent twice.
+    public var dispatchID: UUID
     public var text: String
     public var attachments: [ImageAttachment]
 
-    public init(text: String, attachments: [ImageAttachment] = []) {
+    public init(text: String, attachments: [ImageAttachment] = [], dispatchID: UUID = UUID()) {
+        self.dispatchID = dispatchID
         self.text = text
         self.attachments = attachments
     }
@@ -21,8 +24,8 @@ public struct PromptPayload: Equatable, Sendable {
 }
 
 /// A prompt held back until it can be sent, plus why it was held.
-public struct QueuedPrompt: Identifiable, Equatable, Sendable {
-    public enum HoldReason: Equatable, Sendable {
+public struct QueuedPrompt: Codable, Identifiable, Equatable, Sendable {
+    public enum HoldReason: Codable, Equatable, Sendable {
         /// The relay link was down when the prompt was composed.
         case offline
         /// Another turn was already running.

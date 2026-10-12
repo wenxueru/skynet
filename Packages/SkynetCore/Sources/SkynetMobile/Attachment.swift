@@ -2,7 +2,7 @@ import Foundation
 
 /// An image the user attached to a prompt. Carries raw bytes plus metadata so
 /// the relay can upload it as-is; thumbnails are rendered on demand in the UI.
-public struct ImageAttachment: Identifiable, Hashable, Sendable {
+public struct ImageAttachment: Codable, Identifiable, Hashable, Sendable {
     public let id: UUID
     public var fileName: String
     public var mimeType: String
@@ -34,7 +34,7 @@ public struct ImageAttachment: Identifiable, Hashable, Sendable {
 }
 
 /// Connection state of the relay link to a paired Mac.
-public enum ConnectionState: Equatable, Sendable {
+public enum ConnectionState: Codable, Equatable, Sendable {
     /// No link; `reason` explains what happened for the banner UI.
     case disconnected(reason: String?)
     case connecting

@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Shared machine/project list used by the compact home screen and the iPad

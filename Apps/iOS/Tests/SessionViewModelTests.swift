@@ -1,3 +1,4 @@
+import SkynetMobile
 import XCTest
 @testable import Skynet
 
@@ -129,7 +130,7 @@ final class SessionViewModelTests: XCTestCase {
 
     // MARK: - Permissions
 
-    func testReadScopeAutoApprovesUnderAskForWrites() async {
+    func testReadScopeWaitsForExplicitApproval() async {
         await startAndWaitForSnapshot()
         let request = PermissionRequestRecord(
             id: TranscriptItemID("perm-read"),
@@ -138,10 +139,11 @@ final class SessionViewModelTests: XCTestCase {
         )
         relay.emit(.permissionUpdated(request), to: session.id)
 
-        let resolved = await TestSupport.waitUntil {
-            self.relay.permissionDecisions.contains { $0.requestID == request.id }
+        let shown = await TestSupport.waitUntil {
+            self.model.items.contains { $0.id == request.id }
         }
-        XCTAssertTrue(resolved, "read scope should auto-approve under askForWrites")
+        XCTAssertTrue(shown)
+        XCTAssertTrue(relay.permissionDecisions.isEmpty, "The Mac owns approval policy")
     }
 
     func testWriteScopeAsksAndNotifiesWhenInactive() async {
@@ -170,24 +172,20 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(stillPending, "write requests must not auto-approve")
     }
 
-    func testResolveRecordsDecisionAndAlwaysEscalatesMode() async {
+    func testResolveRecordsDecisionWithoutEscalatingMode() async {
         await startAndWaitForSnapshot()
         guard case .permissionRequest(let request) = PreviewData.transcript[5] else {
             return XCTFail("fixture mismatch")
         }
 
-        await model.resolve(request, decision: .approvedAlways)
+        await model.resolve(request, decision: .approvedOnce)
 
         XCTAssertEqual(
             relay.permissionDecisions.map(\.decision),
-            [.approvedAlways]
+            [.approvedOnce]
         )
-        XCTAssertEqual(
-            relay.configurationUpdates.map(\.configuration.permissions),
-            [.autonomous],
-            "always-allow should escalate the session to autonomous"
-        )
-        XCTAssertEqual(model.currentSession.configuration.permissions, .autonomous)
+        XCTAssertTrue(relay.configurationUpdates.isEmpty)
+        XCTAssertEqual(model.currentSession.configuration.permissions, session.configuration.permissions)
     }
 
     // MARK: - Sending & queueing
@@ -263,7 +261,7 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(relay.sentPrompts.map(\.payload.text), ["queued offline"])
     }
 
-    func testExplicitQueueAndSendNowBypassOrder() async {
+    func testSendQueuedPromptDoesNotBypassActiveTurn() async {
         await startAndWaitForSnapshot()
         relay.emit(.turnStateChanged(.running), to: session.id)
         _ = await TestSupport.waitUntil { !self.model.currentTurnState.acceptsNewPrompt }
@@ -272,17 +270,12 @@ final class SessionViewModelTests: XCTestCase {
         model.composerDidRequestQueue(PromptPayload(text: "second"))
         XCTAssertEqual(model.queuedPromptCount, 2)
 
-        // "Send now" runs immediately, even mid-turn (explicit user intent).
+        // Explicit queue actions must not send into an occupied turn.
         let second = model.queuedPrompts[1]
         model.composerDidRequestSendQueuedPrompt(id: second.id)
-        let sent = await TestSupport.waitUntil {
-            self.relay.sentPrompts.contains { $0.payload.text == "second" }
-        }
-        XCTAssertTrue(sent)
-        XCTAssertEqual(model.queuedPromptCount, 1, "only the sent entry leaves the queue")
-
-        model.composerDidRequestRemoveQueuedPrompt(id: model.queuedPrompts[0].id)
-        XCTAssertTrue(model.queue.isEmpty)
+        _ = await TestSupport.waitUntil { self.model.queuedPromptCount == 2 }
+        XCTAssertTrue(relay.sentPrompts.isEmpty)
+        XCTAssertEqual(model.queuedPromptCount, 2)
     }
 
     // MARK: - Session controls
@@ -315,11 +308,11 @@ final class SessionViewModelTests: XCTestCase {
     func testConfigurationChangeForwardsToRelay() async {
         await startAndWaitForSnapshot()
         model.composerDidChangeConfiguration(
-            AgentConfiguration(model: .deep, effort: .thorough, permissions: .autonomous)
+            AgentConfiguration(model: .deep, effort: .thorough, permissions: .askForEverything)
         )
 
         let applied = await TestSupport.waitUntil {
-            self.model.currentConfiguration.permissions == .autonomous
+            self.model.currentConfiguration.model == .deep
         }
         XCTAssertTrue(applied)
         XCTAssertEqual(
@@ -329,6 +322,84 @@ final class SessionViewModelTests: XCTestCase {
     }
 
     // MARK: - Unread & visibility
+
+    func testAuthoritativeSnapshotRemovesPlaceholderAndDoesNotNotifyOnInitialLoad() async {
+        await startAndWaitForSnapshot()
+        relay.emit(.snapshot(session: session, items: []), to: session.id)
+        let replaced = await TestSupport.waitUntil { self.model.items.isEmpty }
+        XCTAssertTrue(replaced)
+        XCTAssertTrue(scheduler.scheduled.isEmpty)
+    }
+
+    func testLoadFailureStopsSpinnerAndRecoveryClearsError() async {
+        await startAndWaitForSnapshot()
+        relay.emit(.loadFailed("offline"), to: session.id)
+        let failed = await TestSupport.waitUntil { self.model.errorBanner != nil }
+        XCTAssertTrue(failed)
+        XCTAssertFalse(model.isLoadingSnapshot)
+        XCTAssertFalse(model.items.isEmpty)
+        relay.emit(.sessionUpdated(session), to: session.id)
+        let recovered = await TestSupport.waitUntil { self.model.errorBanner == nil }
+        XCTAssertTrue(recovered)
+    }
+
+    func testFailedTurnDoesNotAdvanceQueueButAcceptsManualRetry() async {
+        await startAndWaitForSnapshot()
+        relay.emit(.turnStateChanged(.running), to: session.id)
+        _ = await TestSupport.waitUntil { self.model.currentTurnState == .running }
+        model.composerDidRequestQueue(PromptPayload(text: "waiting"))
+        relay.emit(.turnStateChanged(.failed), to: session.id)
+        _ = await TestSupport.waitUntil { self.model.currentTurnState == .failed }
+        relay.pushConnection(.connected)
+        await Task.yield()
+        XCTAssertEqual(model.queuedPromptCount, 1)
+        XCTAssertTrue(relay.sentPrompts.isEmpty)
+        XCTAssertFalse(model.currentTurnState.isBusy)
+        await model.send(PromptPayload(text: "retry"))
+        XCTAssertEqual(relay.sentPrompts.map(\.payload.text), ["retry"])
+    }
+
+    func testQueueDispatchWaitsForNextTurnCompletion() async {
+        await startAndWaitForSnapshot()
+        model.composerDidRequestQueue(PromptPayload(text: "first"))
+        model.composerDidRequestQueue(PromptPayload(text: "second"))
+        relay.emit(.turnStateChanged(.running), to: session.id)
+        _ = await TestSupport.waitUntil { self.model.currentTurnState == .running }
+        relay.emit(.turnStateChanged(.idle), to: session.id)
+        _ = await TestSupport.waitUntil { self.relay.sentPrompts.count == 1 }
+        XCTAssertEqual(model.queuedPromptCount, 1)
+        XCTAssertEqual(model.currentTurnState, .running)
+    }
+
+    func testStoppedSessionIgnoresBufferedReconnect() async {
+        await startAndWaitForSnapshot()
+        relay.pushConnection(.disconnected(reason: "offline"))
+        _ = await TestSupport.waitUntil { !self.monitor.state.isConnected }
+        await model.send(PromptPayload(text: "held offline"))
+        relay.pushConnection(.connected)
+        model.stop()
+        await TestSupport.drainMainActor()
+        XCTAssertTrue(relay.sentPrompts.isEmpty)
+        XCTAssertEqual(model.queuedPromptCount, 1)
+    }
+
+    func testStoppingDuringTurnCompletionDoesNotStartQueuedDispatch() async {
+        let activities = StopOnEndLiveActivity()
+        model = SessionViewModel(
+            session: session, relay: relay, monitor: monitor, notifications: scheduler,
+            liveActivities: activities, activityState: activityState
+        )
+        activities.model = model
+        await startAndWaitForSnapshot()
+        relay.emit(.turnStateChanged(.running), to: session.id)
+        _ = await TestSupport.waitUntil { self.model.currentTurnState == .running }
+        model.composerDidRequestQueue(PromptPayload(text: "held after leaving"))
+        relay.emit(.turnStateChanged(.idle), to: session.id)
+        _ = await TestSupport.waitUntil { self.model.currentTurnState == .idle }
+        await TestSupport.drainMainActor()
+        XCTAssertTrue(relay.sentPrompts.isEmpty)
+        XCTAssertEqual(model.queuedPromptCount, 1)
+    }
 
     func testUnreadCountsOnlyWhileInvisible() async {
         await startAndWaitForSnapshot()
@@ -352,4 +423,12 @@ final class SessionViewModelTests: XCTestCase {
         let updated = await TestSupport.waitUntil { self.model.currentSession.title == "Renamed on Mac" }
         XCTAssertTrue(updated)
     }
+}
+
+@MainActor
+private final class StopOnEndLiveActivity: LiveActivityPresenting {
+    weak var model: SessionViewModel?
+    func startTurnActivity(sessionID: SessionID, title: String) async {}
+    func updateTurnActivity(state: TurnState, summary: String?) async {}
+    func endTurnActivity(sessionID: SessionID) async { model?.stop() }
 }

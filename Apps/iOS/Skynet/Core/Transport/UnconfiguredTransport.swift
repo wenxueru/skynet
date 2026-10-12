@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Placeholder relay used before any Mac is paired. Every call throws

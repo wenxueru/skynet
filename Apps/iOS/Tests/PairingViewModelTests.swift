@@ -1,3 +1,4 @@
+import SkynetMobile
 import XCTest
 @testable import Skynet
 
@@ -98,7 +99,7 @@ final class PairingViewModelTests: XCTestCase {
         model.enteredCode = PreviewData.pairingCode()
         await model.submitManualCode()
 
-        XCTAssertEqual(model.phase, .failed("Couldn't reach your Mac. Check the network and try again."))
+        XCTAssertEqual(model.phase, .failed("relay unreachable"))
     }
 
     // MARK: - Verification
@@ -183,6 +184,37 @@ final class PairingViewModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .idle)
     }
 
+    func testCannotPairSecondMac() async throws {
+        try await store.rememberMachine(PreviewData.machine)
+        model.enteredCode = PreviewData.pairingCode()
+        await model.submitManualCode()
+        guard case .failed(let message) = model.phase else { return XCTFail("Expected pairing limit") }
+        XCTAssertTrue(message.contains("Unpair"))
+        XCTAssertTrue(service.confirmedCodes.isEmpty)
+    }
+
+    func testNonNumericVerificationNeverReachesService() async {
+        await arrangeVerifying()
+        model.verificationCode = "ABCDEF"
+        await model.confirmVerificationCode()
+        XCTAssertTrue(service.confirmedCodes.isEmpty)
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testCanceledHandshakeCannotOverwriteRestartedFlow() async {
+        let suspended = SuspendedPairingService()
+        let model = PairingViewModel(pairing: suspended, store: InMemoryPairedMachineStore())
+        let intake = Task { await model.handleScannedCode(PreviewData.pairingCode()) }
+        await suspended.waitForPendingHandshake()
+        model.cancel()
+        model.showManualEntry()
+        await suspended.completeHandshake()
+        await intake.value
+        XCTAssertEqual(model.phase, .manualEntry)
+        XCTAssertFalse(model.isWorking)
+        XCTAssertNil(model.pairedMachine)
+    }
+
     // MARK: - Helpers
 
     private func arrangeVerifying() async {
@@ -194,4 +226,36 @@ final class PairingViewModelTests: XCTestCase {
             return
         }
     }
+}
+
+private actor SuspendedPairingService: PairingService {
+    private var continuation: CheckedContinuation<PairingHandshake, any Error>?
+    private var pendingOffer: PairingOffer?
+
+    nonisolated func parseCode(_ raw: String) throws -> PairingOffer {
+        try PairingCodeCodec().decode(raw)
+    }
+
+    func beginPairing(with offer: PairingOffer) async throws -> PairingHandshake {
+        pendingOffer = offer
+        return try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+
+    func waitForPendingHandshake() async {
+        while continuation == nil { await Task.yield() }
+    }
+
+    func completeHandshake() {
+        guard let offer = pendingOffer else { return }
+        continuation?.resume(returning: PairingHandshake(
+            offer: offer, verificationCode: "", machine: PreviewData.machine
+        ))
+        continuation = nil
+    }
+
+    func confirm(_ handshake: PairingHandshake, enteredCode: String) async throws -> PairingResult {
+        throw PairingError.rejected("Not used by this fixture")
+    }
+
+    func unpair(_ machineID: MachineID) async throws {}
 }

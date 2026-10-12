@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Renders `text` with every case-insensitive occurrence of `query`

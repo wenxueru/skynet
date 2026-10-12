@@ -1,3 +1,4 @@
+import SkynetMobile
 import XCTest
 @testable import Skynet
 

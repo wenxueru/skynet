@@ -10,7 +10,7 @@ public struct AgentConfiguration: Hashable, Codable, Sendable {
     public init(
         model: AgentModel,
         effort: ReasoningEffort = .standard,
-        permissions: PermissionMode = .askForWrites
+        permissions: PermissionMode = .askForEverything
     ) {
         self.model = model
         self.effort = effort
@@ -20,7 +20,7 @@ public struct AgentConfiguration: Hashable, Codable, Sendable {
     public static let standard = AgentConfiguration(
         model: AgentModel.balanced,
         effort: .standard,
-        permissions: .askForWrites
+        permissions: .askForEverything
     )
 }
 
@@ -118,7 +118,7 @@ public enum PermissionMode: String, CaseIterable, Codable, Sendable, Identifiabl
     }
 
     /// The most permissive mode the UI should preselect without friction.
-    public static let defaultMode: PermissionMode = .askForWrites
+    public static let defaultMode: PermissionMode = .askForEverything
 }
 
 /// The kind of action a permission request covers.

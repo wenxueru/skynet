@@ -1,3 +1,4 @@
+import SkynetMobile
 import XCTest
 @testable import Skynet
 
@@ -54,21 +55,58 @@ private final class FlakyRelay: SkynetRelay, @unchecked Sendable {
     ) async throws {}
 }
 
+/// Each retry delay advances only when the test releases it. Cancellation
+/// resumes its waiter so a manual retry can drain a canceled backoff task.
+private final class GatedSleeper: DurationSleeper, @unchecked Sendable {
+    private let lock = NSLock()
+    private var durations: [Duration] = []
+    private var waiters: [(UUID, CheckedContinuation<Void, Never>)] = []
+
+    var recorded: [Duration] { lock.withLock { durations } }
+
+    func sleep(for duration: Duration) async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let installed = lock.withLock {
+                    guard !Task.isCancelled else { return false }
+                    durations.append(duration)
+                    waiters.append((id, continuation))
+                    return true
+                }
+                if !installed { continuation.resume() }
+            }
+        } onCancel: {
+            let continuation = self.lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                guard let index = self.waiters.firstIndex(where: { $0.0 == id }) else { return nil }
+                return self.waiters.remove(at: index).1
+            }
+            continuation?.resume()
+        }
+    }
+
+    func releaseNext() {
+        let continuation = lock.withLock { waiters.isEmpty ? nil : waiters.removeFirst().1 }
+        continuation?.resume()
+    }
+}
+
 @MainActor
 final class ConnectionMonitorTests: XCTestCase {
     private var relay: ScriptedRelay!
     private var flaky: FlakyRelay!
-    private var sleeper: RecordedSleeper!
+    private var sleeper: GatedSleeper!
 
     override func setUp() {
         super.setUp()
         relay = PreviewData.scriptedRelay()
         flaky = FlakyRelay()
-        sleeper = RecordedSleeper()
+        sleeper = GatedSleeper()
     }
 
     func testStartPicksUpReplayedConnectionState() async {
         let monitor = ConnectionMonitorModel(relay: relay, sleeper: sleeper)
+        defer { monitor.stop() }
         XCTAssertEqual(monitor.state, .initial)
         monitor.start()
         let connected = await TestSupport.waitUntil { monitor.state.isConnected }
@@ -77,6 +115,7 @@ final class ConnectionMonitorTests: XCTestCase {
 
     func testDisconnectSchedulesBackoffReconnect() async {
         let monitor = ConnectionMonitorModel(relay: relay, sleeper: sleeper)
+        defer { monitor.stop() }
         monitor.start()
         _ = await TestSupport.waitUntil { monitor.state.isConnected }
 
@@ -86,9 +125,11 @@ final class ConnectionMonitorTests: XCTestCase {
         }
         XCTAssertTrue(scheduled, "a disconnect should schedule the first backoff attempt")
         XCTAssertFalse(monitor.state.isConnected)
+        XCTAssertEqual(relay.reconnectCallCount, 0, "the retry must wait for backoff")
 
         // The scripted relay reconnects instantly; the monitor should settle
         // back to connected and stop the loop.
+        sleeper.releaseNext()
         let restored = await TestSupport.waitUntil {
             monitor.state.isConnected && monitor.reconnectAttempt == 0
         }
@@ -98,14 +139,20 @@ final class ConnectionMonitorTests: XCTestCase {
 
     func testBackoffDelaysGrowExponentiallyWhileRelayStaysDown() async {
         let monitor = ConnectionMonitorModel(relay: flaky, sleeper: sleeper)
+        defer { monitor.stop() }
         monitor.start()
         flaky.push(.connected)
         _ = await TestSupport.waitUntil { monitor.state.isConnected }
 
         flaky.reconnectOutcome = .disconnected(reason: "Mac offline")
         flaky.push(.disconnected(reason: "Mac offline"))
-        let backedOff = await TestSupport.waitUntil { sleeper.recorded.count >= 3 }
+        _ = await TestSupport.waitUntil { self.sleeper.recorded.count == 1 }
+        sleeper.releaseNext()
+        _ = await TestSupport.waitUntil { self.sleeper.recorded.count == 2 }
+        sleeper.releaseNext()
+        let backedOff = await TestSupport.waitUntil { self.sleeper.recorded.count == 3 }
         XCTAssertTrue(backedOff, "at least three backoff sleeps should happen while offline")
+        guard backedOff else { return }
 
         let seconds = sleeper.recorded.prefix(3).map { duration in
             Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
@@ -117,19 +164,22 @@ final class ConnectionMonitorTests: XCTestCase {
 
     func testReconnectNowResetsAttemptsAndCallsRelay() async {
         let monitor = ConnectionMonitorModel(relay: flaky, sleeper: sleeper)
+        defer { monitor.stop() }
         monitor.start()
         flaky.reconnectOutcome = .connected
         flaky.push(.disconnected(reason: "away"))
-        _ = await TestSupport.waitUntil { monitor.reconnectAttempt >= 1 }
+        _ = await TestSupport.waitUntil { self.sleeper.recorded.count == 1 }
+        XCTAssertEqual(flaky.reconnectCount, 0)
 
         await monitor.reconnectNow()
-
+        _ = await TestSupport.waitUntil { monitor.state.isConnected }
         XCTAssertEqual(flaky.reconnectCount, 1)
         XCTAssertEqual(monitor.reconnectAttempt, 0)
     }
 
     func testConnectedEventsReplayCurrentState() async {
         let monitor = ConnectionMonitorModel(relay: relay, sleeper: sleeper)
+        defer { monitor.stop() }
         monitor.start()
         _ = await TestSupport.waitUntil { monitor.state.isConnected }
 
@@ -146,9 +196,12 @@ final class ConnectionMonitorTests: XCTestCase {
 
     func testStopCancelsReconnectLoop() async {
         let monitor = ConnectionMonitorModel(relay: flaky, sleeper: sleeper)
+        defer { monitor.stop() }
         monitor.start()
         flaky.push(.disconnected(reason: "down"))
-        _ = await TestSupport.waitUntil { monitor.reconnectAttempt >= 2 }
+        _ = await TestSupport.waitUntil { self.sleeper.recorded.count == 1 }
+        sleeper.releaseNext()
+        _ = await TestSupport.waitUntil { self.sleeper.recorded.count == 2 }
 
         monitor.stop()
         let attemptCount = monitor.reconnectAttempt
@@ -158,6 +211,50 @@ final class ConnectionMonitorTests: XCTestCase {
             attemptCount,
             "attempts should stop climbing after stop()"
         )
+    }
+
+    func testStopIgnoresAlreadyBufferedConnectionEvent() async {
+        let monitor = ConnectionMonitorModel(relay: flaky, sleeper: sleeper)
+        monitor.start()
+        flaky.push(.connected)
+        _ = await TestSupport.waitUntil { monitor.state.isConnected }
+        flaky.push(.disconnected(reason: "buffered before stop"))
+        monitor.stop()
+        await TestSupport.drainMainActor()
+        XCTAssertTrue(monitor.state.isConnected)
+        XCTAssertTrue(sleeper.recorded.isEmpty)
+        XCTAssertEqual(flaky.reconnectCount, 0)
+    }
+
+    func testConnectedEventsDoNotFeedBackFromSuccessfulRefreshes() async {
+        let monitor = ConnectionMonitorModel(relay: relay, sleeper: sleeper)
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await TestSupport.waitUntil { monitor.state.isConnected }
+        var observed: [Bool] = []
+        let observer = Task {
+            for await connected in monitor.connectedEvents() {
+                guard !Task.isCancelled else { break }
+                observed.append(connected)
+                if connected {
+                    // Production projects RPCs report connected on success.
+                    relay.pushConnection(.connected)
+                }
+            }
+        }
+        defer { observer.cancel() }
+        _ = await TestSupport.waitUntil { observed == [true] }
+        await TestSupport.drainMainActor()
+        XCTAssertEqual(observed, [true], "a refresh must not recursively trigger another refresh")
+        relay.pushConnection(.disconnected(reason: "offline"))
+        _ = await TestSupport.waitUntil { observed == [true, false] }
+        relay.pushConnection(.disconnected(reason: "still offline"))
+        _ = await TestSupport.waitUntil { monitor.state == .disconnected(reason: "still offline") }
+        XCTAssertEqual(observed, [true, false], "reason changes must not rebroadcast connectivity")
+        relay.pushConnection(.connected)
+        _ = await TestSupport.waitUntil { observed == [true, false, true] }
+        await TestSupport.drainMainActor()
+        XCTAssertEqual(observed, [true, false, true])
     }
 }
 

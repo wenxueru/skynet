@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Session configuration editor: model, reasoning effort, and permission
@@ -65,6 +66,7 @@ struct SessionSettingsSheet: View {
                     Picker("Permissions", selection: $draft.permissions) {
                         ForEach(PermissionMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
+                                .disabled(mode != .askForEverything)
                         }
                     }
                     .pickerStyle(.inline)
@@ -72,15 +74,7 @@ struct SessionSettingsSheet: View {
                 } header: {
                     Text("Permissions")
                 } footer: {
-                    if draft.permissions == .autonomous {
-                        Label(
-                            "The agent will run commands and edit files without asking. Make sure you trust the task.",
-                            systemImage: "exclamationmark.triangle"
-                        )
-                        .foregroundStyle(Theme.warning)
-                    } else {
-                        Text(draft.permissions.summary)
-                    }
+                    Text("Mobile requests use Ask Always. Other permission policies are controlled on your Mac.")
                 }
             }
             .navigationTitle("Session Settings")

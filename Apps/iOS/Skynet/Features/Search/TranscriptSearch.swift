@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Case-insensitive literal match finder over `String`. Foundation-only so it

@@ -40,6 +40,8 @@ enum SessionCoordinationRegression {
     static func main() async throws {
         try await history()
         try await connectivity()
+        try registry()
+        try library()
     }
 
     @MainActor
@@ -152,6 +154,107 @@ enum SessionCoordinationRegression {
         try require(request.stdinMode == .closed && request.arguments.contains("-oConnectTimeout=5")
                     && request.arguments.suffix(3) == ["--", "fixture", "true"], "bounded read-only SSH request")
         print("PASS: continuous connectivity, offline/recovery, stale results, host removal and SSH diagnostics")
+    }
+
+    @MainActor
+    static func registry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("skynet-registry-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try JSONDiskStore(rootURL: root)
+        var projects: [Project] = []
+        var sessions: [SessionRecord] = []
+        let original = Message(origin: .user, content: [.text("original")])
+        var discovered = DiscoveredSession(
+            providerID: .codex, providerSessionID: "synthetic-registry-thread", title: "Synthetic",
+            workingDirectory: "/synthetic/workspace", modelID: nil,
+            createdAt: Date(timeIntervalSince1970: 100), updatedAt: Date(timeIntervalSince1970: 100),
+            messages: [original]
+        )
+        func snapshot(_ machine: DiscoveredMachine, _ rows: [DiscoveredSession]) -> MachineSessionSnapshot {
+            .init(machine: machine, sessions: rows, error: nil)
+        }
+        try SessionDiscoveryRegistry.merge([snapshot(.local, [discovered, discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [], selectedSessionID: nil, store: store)
+        try require(projects.count == 1 && sessions.count == 1, "duplicate discovery keys import once")
+        let id = sessions[0].id
+        let projectID = projects[0].id
+        sessions[0].title = "User title"
+        sessions[0].pinMode = .global
+        let replacement = Message(origin: .agent, content: [.text("same-count rewrite")])
+        discovered.messages = [replacement]
+        discovered.updatedAt = Date(timeIntervalSince1970: 200)
+        try SessionDiscoveryRegistry.merge([snapshot(.local, [discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [], selectedSessionID: id, store: store)
+        try require(sessions[0].id == id && sessions[0].projectID == projectID && sessions[0].title == "User title",
+                    "discovery preserves local session/project identity and user title")
+        try require(try store.loadMessages(for: id).map(\.id) == [replacement.id],
+                    "newer local same-count history replaces cached messages")
+        discovered.messages.append(Message(origin: .agent, content: [.text("new answer")]))
+        discovered.updatedAt = Date(timeIntervalSince1970: 300)
+        try SessionDiscoveryRegistry.merge([snapshot(.local, [discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [], selectedSessionID: nil, store: store)
+        try require(sessions[0].markedUnreadAt == discovered.updatedAt && sessions[0].messageCount == 2,
+                    "new assistant content marks a nonselected session unread")
+
+        let remote = DiscoveredMachine(id: BackendID("ssh:synthetic-registry"), name: "Fixture", sshAlias: "fixture")
+        try SessionDiscoveryRegistry.merge([snapshot(remote, [discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [], selectedSessionID: nil, store: store)
+        guard let remoteRecord = sessions.first(where: { $0.backendID == remote.id }) else {
+            throw Failure(reason: "Missing remote fixture record")
+        }
+        try require(projects.count == 2 && remoteRecord.projectID != projectID,
+                    "same directory and provider token stay isolated by backend")
+        let cachedIDs = try store.loadMessages(for: remoteRecord.id).map(\.id)
+        discovered.messages = [
+            Message(origin: .user, content: [.text("remote replacement")]),
+            Message(origin: .agent, content: [.text("remote replacement")])
+        ]
+        discovered.updatedAt = Date(timeIntervalSince1970: 400)
+        try SessionDiscoveryRegistry.merge([snapshot(remote, [discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [], selectedSessionID: nil, store: store)
+        try require(try store.loadMessages(for: remoteRecord.id).map(\.id) == cachedIDs,
+                    "same-count remote snapshot cannot overwrite cached full history")
+        discovered.providerSessionID = "synthetic-deleted-thread"
+        let tombstone = DiscoverySessionKey(backendID: remote.id, providerID: .codex,
+                                           resumeToken: discovered.providerSessionID)
+        try SessionDiscoveryRegistry.merge([snapshot(remote, [discovered])],
+            projects: &projects, sessions: &sessions, deletedKeys: [tombstone], selectedSessionID: nil, store: store)
+        try require(sessions.count == 2, "deleted discovery identity cannot be reimported")
+        let restoredKey = try JSONDecoder().decode(DiscoverySessionKey.self, from: JSONEncoder().encode(tombstone))
+        try require(restoredKey == tombstone, "discovery tombstone storage remains compatible")
+        print("PASS: discovery deduplication, local/remote history, identity, unread and tombstones")
+    }
+
+    static func library() throws {
+        let manual = Project(name: "Manual")
+        let empty = Project(name: "Empty", metadata: ["discovered": "true"])
+        let pinned = Project(name: "Pinned", metadata: ["discovered": "true", "pinned": "true"])
+        let discovered = Project(name: "Discovered", metadata: ["discovered": "true"])
+        var newest = SessionRecord(projectID: discovered.id, providerID: .codex, title: "Newest")
+        newest.updatedAt = Date(timeIntervalSince1970: 300)
+        var marked = SessionRecord(projectID: discovered.id, providerID: .codex, title: "Pinned session")
+        marked.pinMode = .global
+        marked.updatedAt = Date(timeIntervalSince1970: 100)
+        var archived = SessionRecord(projectID: discovered.id, providerID: .codex, title: "Archived needle")
+        archived.isArchived = true
+        let records = [newest, marked, archived]
+        let projects = [manual, empty, discovered, pinned]
+        try require(SessionLibraryQuery.projects(projects, sessions: records, query: "").map(\.id)
+                    == [pinned.id, manual.id, discovered.id], "sidebar visibility and pinned order remain stable")
+        try require(SessionLibraryQuery.projects(projects, sessions: records, query: "needle").map(\.id)
+                    == [discovered.id], "project title search retains historical archived-title matching")
+        try require(SessionLibraryQuery.sessions(records, in: discovered, query: "").map(\.id)
+                    == [marked.id, newest.id], "session pin priority and archive hiding remain stable")
+        try require(SessionLibraryQuery.sessions(records, in: discovered, query: "discovered").count == 2,
+                    "matching project title shows all its visible sessions")
+        try require(SessionLibraryQuery.sessions(records, in: discovered, query: "NEWEST").map(\.id)
+                    == [newest.id], "session search is case-insensitive")
+        let unassigned = SessionRecord(providerID: .codex, title: "needle")
+        try require(SessionLibraryQuery.projects([manual, empty], sessions: [unassigned], query: "needle").isEmpty,
+                    "unassigned matching session cannot make a project visible")
+        try require(SessionLibraryQuery.projects([discovered], sessions: [archived], query: "needle").isEmpty,
+                    "archived-only discovered project stays hidden even when its title matches")
+        print("PASS: sidebar project/session projection, archived visibility, pins and search")
     }
 
     @MainActor

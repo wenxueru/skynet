@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Central registry of accessibility identifiers used by UI tests and

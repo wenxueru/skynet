@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 @preconcurrency import UserNotifications
 
@@ -50,8 +51,12 @@ public final class UserNotificationsScheduler: AppNotificationScheduling, @unche
     public func requestAuthorization() async -> Bool {
         let settings = await center.notificationSettings()
         switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
+        case .authorized, .provisional:
             return true
+        #if os(iOS)
+        case .ephemeral:
+            return true
+        #endif
         case .denied:
             return false
         case .notDetermined:

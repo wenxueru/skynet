@@ -4,14 +4,12 @@ build_products=${1:?Usage: zsh Apps/macOS/Tests/run-scheduled-submission-regress
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
 fixture_dir=$(mktemp -d /private/tmp/skynet-scheduled-submission.XXXXXX)
 awk 'FNR==NR {
-    if(/^    struct QueuedPrompt:/) section="types";
-    if(/^    struct LiveTool:/) section="";
+    if(/^    typealias (QueuedPrompt|ComposerDraft) =/) types=types $0 "\n";
     if(/^    var canStopSelectedSession:/) section="stopVisibility";
     if(/^    var pendingPermissionRequest:/) section="";
     if(/^    var shouldQueueComposerSubmission:/ || /^    func enqueueDraft\(/) section="members";
     if(/^    func saveCustomProvider\(/) section="";
     if(/^private struct AppPermissionResponder:/) section="responder";
-    if(section=="types") types=types $0 "\n";
     if(section=="members") members=members $0 "\n";
     if(section=="stopVisibility") visibility=visibility $0 "\n";
     if(section=="responder") {
@@ -42,7 +40,8 @@ awk 'FNR==NR {
 /\/\/ TERMINATION_HELPERS/ {printf "%s",helpers;next}
 {print}' Apps/macOS/Tests/TurnCancellationRegression.swift - |
 awk 'FNR==NR {source=source $0 "\n";next} FNR==1 {printf "%s",source} {print}' Apps/macOS/Skynet/SessionTurnExecutor.swift - |
-    xcrun swiftc - Packages/SkynetCore/Sources/SkynetCoreDoubles/ScriptedExecutionBackend.swift \
+    xcrun swiftc - Apps/macOS/Skynet/SessionComposerStorage.swift \
+        Packages/SkynetCore/Sources/SkynetCoreDoubles/ScriptedExecutionBackend.swift \
         -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos14.0" \
         -I "$build_products" -module-cache-path "$fixture_dir/ModuleCache" \
         "$build_products/SkynetCore.o" -o "$fixture_dir/ScheduledSubmissionRegression"

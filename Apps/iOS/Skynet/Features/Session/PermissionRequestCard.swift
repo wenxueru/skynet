@@ -1,7 +1,8 @@
+import SkynetMobile
 import SwiftUI
 
 /// Inline permission request: what the agent wants to do, its scope, and
-/// Approve / Always allow / Deny while pending; a settled badge afterwards.
+/// Approve / Deny while pending; persistent approval remains Mac-only.
 struct PermissionRequestCard: View {
     let record: PermissionRequestRecord
     let onDecision: (PermissionDecision) -> Void
@@ -48,15 +49,11 @@ struct PermissionRequestCard: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier(A11yID.Session.permissionApprove(record.id))
 
-                    Button {
-                        onDecision(.approvedAlways)
-                    } label: {
-                        Text("Always")
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier(A11yID.Session.permissionApproveAlways(record.id))
                 }
                 .font(.subheadline)
+                Text("Persistent approval is available on your Mac.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             } else {
                 BadgeView(
                     decisionTitle,

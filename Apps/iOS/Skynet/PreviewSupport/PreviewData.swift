@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Static sample data for previews, unit tests, and UI-test fixtures.

@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Bridge between the composer (and its controls) and whatever owns session

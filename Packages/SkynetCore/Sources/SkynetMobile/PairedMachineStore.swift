@@ -26,9 +26,22 @@ public protocol PairedMachineStore: Sendable {
     func saveCredential(_ credential: MachineCredential, for machineID: MachineID) async throws
     func credential(for machineID: MachineID) async throws -> MachineCredential?
     func removeCredential(for machineID: MachineID) async throws
+    /// Persist the pairing as one transaction. No machine may become visible without its credential.
+    func savePairing(machine: Machine, credential: MachineCredential) async throws
 }
 
-/// Production store: Keychain for credentials, UserDefaults for metadata.
+public extension PairedMachineStore {
+    func savePairing(machine: Machine, credential: MachineCredential) async throws {
+        try await saveCredential(credential, for: machine.id)
+        do { try await rememberMachine(machine) }
+        catch {
+            try? await removeCredential(for: machine.id)
+            throw error
+        }
+    }
+}
+
+/// Production pairing is a single Keychain record; legacy metadata stays readable.
 /// `@unchecked Sendable` because `UserDefaults` is documented thread-safe
 /// but not annotated `Sendable`.
 public final class KeychainPairedMachineStore: PairedMachineStore, @unchecked Sendable {
@@ -46,6 +59,7 @@ public final class KeychainPairedMachineStore: PairedMachineStore, @unchecked Se
     // MARK: - Machines (UserDefaults)
 
     public func machines() async throws -> [Machine] {
+        if let pairing = try readPairing() { return [pairing.machine] }
         guard let data = defaults.data(forKey: Self.machinesKey),
               let list = try? JSONDecoder().decode([Machine].self, from: data) else {
             return []
@@ -54,6 +68,10 @@ public final class KeychainPairedMachineStore: PairedMachineStore, @unchecked Se
     }
 
     public func rememberMachine(_ machine: Machine) async throws {
+        if let pairing = try readPairing(), pairing.machine.id == machine.id {
+            try await savePairing(machine: machine, credential: pairing.credential)
+            return
+        }
         var list = try await machines()
         list.removeAll { $0.id == machine.id }
         list.append(machine)
@@ -62,6 +80,9 @@ public final class KeychainPairedMachineStore: PairedMachineStore, @unchecked Se
     }
 
     public func forgetMachine(_ machineID: MachineID) async throws {
+        if let pairing = try readPairing(), pairing.machine.id == machineID {
+            try deleteKeychain(account: Self.pairingAccount)
+        }
         var list = try await machines()
         list.removeAll { $0.id == machineID }
         let data = try JSONEncoder().encode(list)
@@ -72,63 +93,80 @@ public final class KeychainPairedMachineStore: PairedMachineStore, @unchecked Se
     // MARK: - Credentials (Keychain)
 
     public func saveCredential(_ credential: MachineCredential, for machineID: MachineID) async throws {
-        let data = try JSONEncoder().encode(credential)
-        let query: [String: Any] = [
+        if let pairing = try readPairing(), pairing.machine.id == machineID {
+            try await savePairing(machine: pairing.machine, credential: credential)
+            return
+        }
+        try writeKeychain(JSONEncoder().encode(credential), account: machineID.rawValue)
+    }
+
+    public func credential(for machineID: MachineID) async throws -> MachineCredential? {
+        if let pairing = try readPairing(), pairing.machine.id == machineID { return pairing.credential }
+        return try readKeychain(MachineCredential.self, account: machineID.rawValue)
+    }
+
+    public func removeCredential(for machineID: MachineID) async throws {
+        if let pairing = try readPairing(), pairing.machine.id == machineID {
+            try deleteKeychain(account: Self.pairingAccount)
+        }
+        try deleteKeychain(account: machineID.rawValue)
+    }
+
+    public func savePairing(machine: Machine, credential: MachineCredential) async throws {
+        let data = try JSONEncoder().encode(PairingRecord(machine: machine, credential: credential))
+        try writeKeychain(data, account: Self.pairingAccount)
+    }
+
+    private struct PairingRecord: Codable {
+        let machine: Machine
+        let credential: MachineCredential
+    }
+
+    private func readPairing() throws -> PairingRecord? {
+        try readKeychain(PairingRecord.self, account: Self.pairingAccount)
+    }
+
+    private func keychainQuery(account: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: machineID.rawValue,
+            kSecAttrAccount as String: account,
         ]
+    }
 
-        let attributes: [String: Any] = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+    private func writeKeychain(_ data: Data, account: String) throws {
+        let query = keychainQuery(account: account)
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var addQuery = query
-            addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                throw SkynetError.keychainFailure(addStatus)
-            }
+            var add = query
+            add[kSecValueData as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let result = SecItemAdd(add as CFDictionary, nil)
+            guard result == errSecSuccess else { throw SkynetError.keychainFailure(result) }
         } else if status != errSecSuccess {
             throw SkynetError.keychainFailure(status)
         }
     }
 
-    public func credential(for machineID: MachineID) async throws -> MachineCredential? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: machineID.rawValue,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    private func readKeychain<Value: Decodable>(_ type: Value.Type, account: String) throws -> Value? {
+        var query = keychainQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        switch status {
-        case errSecSuccess:
-            guard let data = item as? Data,
-                  let credential = try? JSONDecoder().decode(MachineCredential.self, from: data) else {
-                throw SkynetError.keychainFailure(errSecInvalidData)
-            }
-            return credential
-        case errSecItemNotFound:
-            return nil
-        default:
-            throw SkynetError.keychainFailure(status)
-        }
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw SkynetError.keychainFailure(status) }
+        guard let data = item as? Data else { throw SkynetError.keychainFailure(errSecInvalidData) }
+        do { return try JSONDecoder().decode(type, from: data) }
+        catch { throw SkynetError.keychainFailure(errSecInvalidData) }
     }
 
-    public func removeCredential(for machineID: MachineID) async throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: machineID.rawValue,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw SkynetError.keychainFailure(status)
-        }
+    private func deleteKeychain(account: String) throws {
+        let status = SecItemDelete(keychainQuery(account: account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw SkynetError.keychainFailure(status) }
     }
+
+    private static let pairingAccount = "paired-mac-record"
 
     private static let machinesKey = "app.skynet.paired-machines"
 }
@@ -167,6 +205,13 @@ public final class InMemoryPairedMachineStore: PairedMachineStore, @unchecked Se
     public func saveCredential(_ credential: MachineCredential, for machineID: MachineID) async throws {
         lock.withLock {
             credentials[machineID] = credential
+        }
+    }
+
+    public func savePairing(machine: Machine, credential: MachineCredential) async throws {
+        lock.withLock {
+            machineList = [machine]
+            credentials = [machine.id: credential]
         }
     }
 

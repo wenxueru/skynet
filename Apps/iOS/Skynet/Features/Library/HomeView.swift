@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// Compact-width root: the machine/project library with the pairing entry
@@ -32,8 +33,10 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, Theme.Spacing.md)
             }
-            ConnectionBannerView(monitor: environment.monitor)
-                .padding(.horizontal, Theme.Spacing.md)
+            if !model.isEmpty {
+                ConnectionBannerView(monitor: environment.monitor)
+                    .padding(.horizontal, Theme.Spacing.md)
+            }
 
             if model.isEmpty && !model.isLoading {
                 EmptyStateView(

@@ -72,9 +72,11 @@ public protocol SkynetRelay: Sendable {
 
 /// Events delivered for an open session. Ordered per session; cross-session
 /// ordering is not guaranteed.
-public enum SessionEvent: Equatable, Sendable {
-    /// Full state at subscription time.
+public enum SessionEvent: Codable, Equatable, Sendable {
+    /// Authoritative full state, initially and when items have been removed.
     case snapshot(session: AgentSession, items: [TranscriptItem])
+    /// Snapshot reads failed. Existing transcript remains visible while the relay retries.
+    case loadFailed(String)
     /// A new item was appended to the transcript.
     case itemAppended(TranscriptItem)
     /// A chunk of text arrived for a streaming assistant message.

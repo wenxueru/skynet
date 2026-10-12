@@ -38,7 +38,8 @@ FILENAME==ARGV[2] {
     printf "            let capturedDecision = staleDecision.%s\n",decisionBinding;next
 }
 {print}' Apps/macOS/Skynet/AppModel.swift Apps/macOS/Skynet/SessionDetailView.swift Apps/macOS/Tests/PermissionRequestCancellationRegression.swift |
-    xcrun swiftc - Packages/SkynetCore/Sources/SkynetCoreDoubles/ScriptedExecutionBackend.swift \
+    xcrun swiftc - Apps/macOS/Skynet/SessionPermissionController.swift \
+        Packages/SkynetCore/Sources/SkynetCoreDoubles/ScriptedExecutionBackend.swift \
         -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos14.0" \
         -I "$build_products" -module-cache-path "$fixture_dir/ModuleCache" \
         "$build_products/SkynetCore.o" -o "$fixture_dir/PermissionRequestCancellationRegression"

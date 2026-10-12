@@ -26,6 +26,7 @@ struct ProviderSettingsView: View {
         case .general: GeneralSettingsView()
         case .agents: AgentSettingsView(model: model)
         case .ssh: SSHSettingsView(model: model)
+        case .mobile: MobileAccessSettingsView(model: model, host: model.mobileRelay)
         case .storage: StorageSettingsView(model: model)
         case .usage: UsageSettingsView(model: model)
         case .about: AboutSettingsView()
@@ -34,7 +35,7 @@ struct ProviderSettingsView: View {
 }
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, agents, ssh, storage, usage, about
+    case general, agents, ssh, mobile, storage, usage, about
 
     var id: String { rawValue }
     var title: String {
@@ -42,6 +43,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .general: "General"
         case .agents: "Agents"
         case .ssh: "SSH Connections"
+        case .mobile: "Mobile Access"
         case .storage: "Storage"
         case .usage: "Usage"
         case .about: "About"
@@ -52,6 +54,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .agents: "terminal"
         case .ssh: "network"
+        case .mobile: "iphone.and.arrow.forward"
         case .storage: "internaldrive"
         case .usage: "chart.bar"
         case .about: "info.circle"

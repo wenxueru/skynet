@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Drives the secure pairing flow's UI state machine:
@@ -30,6 +31,7 @@ public final class PairingViewModel {
 
     private let pairing: any PairingService
     private let store: any PairedMachineStore
+    private var generation = 0
 
     public init(pairing: any PairingService, store: any PairedMachineStore) {
         self.pairing = pairing
@@ -71,6 +73,7 @@ public final class PairingViewModel {
     }
 
     private func intake(_ raw: String) async {
+        guard !isWorking else { return }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             errorMessage = "Enter the pairing code shown on your Mac."
@@ -89,42 +92,54 @@ public final class PairingViewModel {
         }
 
         isWorking = true
+        generation += 1
+        let requestGeneration = generation
+        defer { if requestGeneration == generation { isWorking = false } }
         errorMessage = nil
         phase = .connecting(offer)
         do {
+            guard try await store.machines().isEmpty else {
+                throw PairingError.rejected("Unpair your current Mac before pairing another one.")
+            }
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             let handshake = try await pairing.beginPairing(with: offer)
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             verificationCode = ""
             phase = .verifying(handshake)
         } catch {
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             phase = .failed(Self.friendlyMessage(for: error))
         }
-        isWorking = false
     }
 
     // MARK: - Verification
 
     public func confirmVerificationCode() async {
-        guard case .verifying(let handshake) = phase else { return }
+        guard !isWorking, case .verifying(let handshake) = phase else { return }
         let entered = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard entered.count == 6 else {
+        guard entered.count == 6, entered.allSatisfy({ $0.isASCII && $0.isNumber }) else {
             errorMessage = "Enter the six-digit code shown on your Mac."
             return
         }
 
         isWorking = true
-        defer { isWorking = false }
+        let requestGeneration = generation
+        defer { if requestGeneration == generation { isWorking = false } }
         do {
             let result = try await pairing.confirm(handshake, enteredCode: entered)
-            try await store.rememberMachine(result.machine)
-            try await store.saveCredential(result.credential, for: result.machine.id)
+            guard requestGeneration == generation, !Task.isCancelled else { return }
+            try await store.savePairing(machine: result.machine, credential: result.credential)
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             Log.pairing.info("Paired with \(result.machine.displayName)")
             pairedMachine = result.machine
             phase = .paired(result.machine)
         } catch let error as PairingError where error == .verificationCodeMismatch {
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             // Stay on the verification screen so the user can retry.
             errorMessage = "That code doesn't match. Check the code on your Mac and try again."
             verificationCode = ""
         } catch {
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             phase = .failed(Self.friendlyMessage(for: error))
         }
     }
@@ -132,6 +147,8 @@ public final class PairingViewModel {
     // MARK: - Helpers
 
     private func resetTransientState() {
+        generation += 1
+        pairedMachine = nil
         enteredCode = ""
         verificationCode = ""
         errorMessage = nil

@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Presentation logic for the bottom composer: draft text, attachments, and

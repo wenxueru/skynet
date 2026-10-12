@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// App entry point. All services are protocol-fronted; see `AppEnvironment`

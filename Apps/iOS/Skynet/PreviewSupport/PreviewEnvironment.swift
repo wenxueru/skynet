@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 extension AppEnvironment {

@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Remote-notification seam. The iOS side only registers and forwards

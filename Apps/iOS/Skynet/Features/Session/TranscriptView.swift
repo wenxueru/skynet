@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// The scrolling transcript: lazy rows, bottom-anchored autoscroll, a

@@ -1,3 +1,4 @@
+import SkynetMobile
 import SwiftUI
 
 /// An expandable tool-call row: compact header (kind, title, state, duration)

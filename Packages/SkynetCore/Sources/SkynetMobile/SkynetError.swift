@@ -9,6 +9,8 @@ public enum SkynetError: Error, Equatable, Sendable {
     case connectionLost(String)
     /// The relay answered with a failure.
     case relayRejected(String)
+    /// The Mac revoked or no longer accepts this device's pairing.
+    case authorizationFailed(String)
     /// A stored pairing is missing its credential.
     case missingCredential(MachineID)
     /// Keychain interaction failed.
@@ -18,7 +20,7 @@ public enum SkynetError: Error, Equatable, Sendable {
 
     public var isConnectivityRelated: Bool {
         switch self {
-        case .notPaired, .connectionLost: return true
+        case .notPaired, .connectionLost, .authorizationFailed: return true
         case .relayRejected, .missingCredential, .keychainFailure, .invalidInput: return false
         }
     }
@@ -32,6 +34,8 @@ extension SkynetError: LocalizedError {
         case .connectionLost(let detail):
             return detail.isEmpty ? "Connection to the Mac was lost." : detail
         case .relayRejected(let detail):
+            return detail
+        case .authorizationFailed(let detail):
             return detail
         case .missingCredential(let machineID):
             return "The saved credential for “\(machineID.rawValue)” is missing. Pair again."

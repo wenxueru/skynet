@@ -1,3 +1,4 @@
+import SkynetMobile
 import Foundation
 
 /// Lightweight app-wide index of known sessions and projects, kept fresh as
