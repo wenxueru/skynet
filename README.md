@@ -141,8 +141,12 @@ queue follow-ups, stop turns, and answer individual approval requests. Agent exe
 and permission policy stay on the Mac. One Mac can be paired in the iOS app at a time.
 Mobile access is off by default and can be revoked from Mac settings.
 
-Read the [architecture boundaries](docs/architecture.md) and
-[migration scope](docs/hapi_migration_audit.md) for implementation details.
+Read the [architecture boundaries](docs/architecture.md) for implementation details.
 
 Before contributing, enable the staged-file privacy check with
 `git config --local core.hooksPath .githooks`. CI also scans reachable Git history.
+
+## References
+
+- [HAPI](https://github.com/tiann/hapi) — a reference project for CLI-backed coding-agent workflows and mobile access.
+- [Happy](https://github.com/slopus/happy) — a reference project for mobile access to Claude Code and Codex.
