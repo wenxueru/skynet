@@ -108,7 +108,6 @@ xcodegen generate --spec project.yml  # after changing targets or build settings
 zsh Design/render-readme-demo.sh
 # Choose an available iPhone simulator from `xcrun simctl list devices`.
 zsh Design/render-ios-demo.sh <simulator-UDID>
-git config --local core.hooksPath .githooks
 ```
 
 </details>
