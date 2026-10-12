@@ -139,6 +139,8 @@ struct SessionComposerView<Content: View>: View {
 
     private var composer: some View {
         let suggestions = visibleSuggestions
+        let hasMessageContent = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !model.pendingAttachments.isEmpty
         return VStack(spacing: 8) {
             if !model.queuedPrompts.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -190,9 +192,12 @@ struct SessionComposerView<Content: View>: View {
                                         model.removeQueuedPrompt(entry.id)
                                     } label: {
                                         Image(systemName: "trash")
+                                            .frame(width: 24, height: 24)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Remove from queue")
+                                    .accessibilityLabel("Remove from queue")
                                     .disabled(entry.dispatchStartedAt != nil
                                         && model.scheduledDispatchingSessionID == model.selectedSessionID)
                                     Menu {
@@ -213,10 +218,12 @@ struct SessionComposerView<Content: View>: View {
                                         .disabled(!model.canMoveQueuedPrompt(entry.id, by: 1))
                                     } label: {
                                         Image(systemName: "ellipsis")
+                                            .frame(width: 24, height: 24)
                                     }
                                     .menuStyle(.borderlessButton)
                                     .menuIndicator(.hidden)
                                     .help("Queue message actions")
+                                    .accessibilityLabel("Queue message actions")
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 6)
@@ -271,9 +278,12 @@ struct SessionComposerView<Content: View>: View {
                 HStack {
                     Button { isImageImporterPresented = true } label: {
                         Image(systemName: "plus")
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Attach image")
+                    .accessibilityLabel("Attach image")
 
                     Menu {
                         Button("Send now") { pendingSchedule = nil }
@@ -290,12 +300,14 @@ struct SessionComposerView<Content: View>: View {
                     } label: {
                         Image(systemName: pendingSchedule == nil ? "clock" : "clock.fill")
                             .foregroundStyle(pendingSchedule == nil ? Color.secondary : Color.blue)
+                            .frame(width: 28, height: 28)
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                     .help(pendingSchedule.map {
                         "Scheduled for \($0.fireDate(from: Date()).formatted(date: .abbreviated, time: .shortened))"
                     } ?? "Schedule send")
+                    .accessibilityLabel("Schedule send")
 
                     permissionMenu
                     Spacer()
@@ -309,21 +321,25 @@ struct SessionComposerView<Content: View>: View {
                         Button(action: model.cancel) {
                             Image(systemName: "stop.fill")
                                 .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Stop current turn")
+                        .accessibilityLabel("Stop current turn")
                     }
                     Button(action: submit) {
                         Image(systemName: model.shouldQueueComposerSubmission ? "text.badge.plus" : "arrow.up")
-                            .foregroundStyle(.white)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(hasMessageContent ? Color.white : .secondary)
                             .frame(width: 34, height: 34)
-                            .background(.blue, in: Circle())
+                            .background(hasMessageContent ? Color.accentColor : Color(nsColor: .controlBackgroundColor),
+                                        in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .help(pendingSchedule == nil
-                          ? (model.shouldQueueComposerSubmission ? "Queue message" : "Send") : "Schedule message")
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              && model.pendingAttachments.isEmpty)
+                    .help(submissionLabel)
+                    .accessibilityLabel(submissionLabel)
+                    .disabled(!hasMessageContent)
                 }
             }
             .padding(12)
@@ -338,6 +354,11 @@ struct SessionComposerView<Content: View>: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private var submissionLabel: String {
+        if pendingSchedule != nil { return "Schedule message" }
+        return model.shouldQueueComposerSubmission ? "Queue message" : "Send"
     }
 
     private var modelMenu: some View {

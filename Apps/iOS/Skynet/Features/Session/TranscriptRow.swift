@@ -39,7 +39,7 @@ struct TranscriptRow: View {
                 deliveryFooter(message.deliveryState)
             }
             .padding(.horizontal, Theme.Spacing.md)
-            .padding(.vertical, Theme.Spacing.sm)
+            .padding(.vertical, Theme.Spacing.md)
             .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: Theme.Radius.lg))
             .frame(maxWidth: 420, alignment: .trailing)
         }
@@ -47,27 +47,16 @@ struct TranscriptRow: View {
     }
 
     private func attachmentStrip(_ attachments: [ImageAttachment]) -> some View {
-        HStack(spacing: Theme.Spacing.xs) {
-            ForEach(attachments) { attachment in
-                if let image = UIImage(data: attachment.data) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                        .accessibilityLabel("Attached image \(attachment.fileName)")
-                } else {
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(width: 72, height: 72)
-                        .overlay {
-                            Image(systemName: "photo")
-                                .foregroundStyle(Color.secondary)
-                        }
+        ScrollView(.horizontal) {
+            HStack(spacing: Theme.Spacing.xs) {
+                ForEach(attachments) { attachment in
+                    AttachmentImageView(attachment: attachment, size: 72, placeholderOpacity: 0.2)
                         .accessibilityLabel("Attached image \(attachment.fileName)")
                 }
             }
         }
+        .scrollIndicators(.hidden)
+        .frame(height: 72)
     }
 
     @ViewBuilder
@@ -112,8 +101,8 @@ struct TranscriptRow: View {
             .padding(.horizontal, Theme.Spacing.md)
             .padding(.vertical, Theme.Spacing.sm)
             .background(Theme.assistantBubble, in: RoundedRectangle(cornerRadius: Theme.Radius.lg))
-            .frame(maxWidth: 440, alignment: .leading)
-            Spacer(minLength: 48)
+            .frame(maxWidth: 620, alignment: .leading)
+            Spacer(minLength: 0)
         }
         .accessibilityIdentifier(A11yID.Session.row(message.id))
     }

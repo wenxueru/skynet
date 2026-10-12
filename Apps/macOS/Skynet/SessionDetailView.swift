@@ -108,44 +108,50 @@ struct SessionDetailView: View {
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .help("Rename session")
+                .accessibilityLabel("Rename session")
+                .accessibilityValue(title)
             }
             Spacer(minLength: 0)
             if model.isSelectedSessionRunning {
                 ProgressView().controlSize(.small)
+                    .accessibilityLabel("Session is working")
             }
             Button {
                 isSidePanelMenuPresented.toggle()
             } label: {
-                Image(systemName: "rectangle.split.2x1")
-                    .frame(width: 30, height: 30)
-                    .background(isSidePanelMenuPresented ? Color.accentColor.opacity(0.16) : .clear,
-                                in: RoundedRectangle(cornerRadius: 8))
+                SessionHeaderActionIcon(systemName: "rectangle.split.2x1",
+                                        isSelected: isSidePanelMenuPresented)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isSidePanelMenuPresented ? Color.accentColor : .secondary)
             .help("Toggle side panel")
+            .accessibilityLabel("Toggle side panel")
+            .accessibilityValue(isSidePanelMenuPresented ? "Open" : "Closed")
             .popover(isPresented: $isSidePanelMenuPresented, arrowEdge: .bottom) {
                 sidePanelMenu
             }
             Button {
                 isEnvironmentPresented.toggle()
             } label: {
-                Image(systemName: "slider.horizontal.3")
+                SessionHeaderActionIcon(systemName: "slider.horizontal.3",
+                                        isSelected: isEnvironmentPresented)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .help("Environment and activity")
+            .accessibilityLabel("Environment and activity")
+            .accessibilityValue(isEnvironmentPresented ? "Open" : "Closed")
             .popover(isPresented: $isEnvironmentPresented, arrowEdge: .bottom) {
                 environmentPanel
             }
             Button {
                 isOutlinePresented.toggle()
             } label: {
-                Image(systemName: "list.bullet")
+                SessionHeaderActionIcon(systemName: "list.bullet",
+                                        isSelected: isOutlinePresented)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .help("Conversation outline")
+            .accessibilityLabel("Conversation outline")
+            .accessibilityValue(isOutlinePresented ? "Open" : "Closed")
             .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Search outline", text: $outlineQuery)
@@ -496,6 +502,21 @@ struct SessionDetailView: View {
             .compactMap { $0 }.joined(separator: "\n\n")
     }
 
+}
+
+private struct SessionHeaderActionIcon: View {
+    let systemName: String
+    let isSelected: Bool
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            .frame(width: 30, height: 30)
+            .background(isSelected ? Color.accentColor.opacity(0.12) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
 }
 
 // A regular sheet button performs its action before the binding dismisses the

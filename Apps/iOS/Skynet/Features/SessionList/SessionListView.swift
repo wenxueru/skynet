@@ -25,7 +25,10 @@ struct SessionListView: View {
 
     var body: some View {
         Group {
-            if model.sessions.isEmpty && !model.isLoading {
+            if model.sessions.isEmpty && model.isLoading {
+                ProgressView("Loading sessions…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.sessions.isEmpty {
                 emptyState
             } else {
                 sessionList
@@ -99,9 +102,12 @@ struct SessionListView: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(model.filteredSessions) { session in
-                    SessionRowView(session: session)
-                        .contentShape(Rectangle())
-                        .onTapGesture { environment.router.open(session: session) }
+                    Button {
+                        environment.router.open(session: session)
+                    } label: {
+                        SessionRowView(session: session)
+                    }
+                        .buttonStyle(.plain)
                         .contextMenu {
                             Button {
                                 renamingSession = session
@@ -129,6 +135,7 @@ struct SessionListView: View {
                             }
                         }
                         .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                         .listRowInsets(
                             EdgeInsets(
                                 top: Theme.Spacing.xs,
@@ -142,6 +149,8 @@ struct SessionListView: View {
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .searchable(
             text: $model.searchQuery,
             placement: .navigationBarDrawer(displayMode: .automatic),
@@ -160,12 +169,6 @@ struct SessionListView: View {
             action: { Task { await model.createSession() } },
             actionAccessibilityID: A11yID.SessionList.emptyNewSessionButton
         )
-        .overlay {
-            if model.isLoading {
-                ProgressView()
-                    .controlSize(.large)
-            }
-        }
     }
 }
 
@@ -202,7 +205,9 @@ struct SessionRowView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(session.title), \(session.state.displayName), \(session.unreadCount) unread"

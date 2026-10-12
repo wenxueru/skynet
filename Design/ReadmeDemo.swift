@@ -144,23 +144,13 @@ enum ReadmeDemo {
                 [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
         }
         for frame in frames {
-            CGImageDestinationAddImage(destination, try standardSRGB(frame),
+            let image: CGImage
+            do { image = try DemoImage.standardSRGB(frame) }
+            catch { throw CocoaError(.fileWriteUnknown) }
+            CGImageDestinationAddImage(destination, image,
                 [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 2.5]] as CFDictionary)
         }
         guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
     }
 
-    private static func standardSRGB(_ image: CGImage) throws -> CGImage {
-        // Re-render pixels in a standard space; never export the display's ICC
-        // profile or copy capture/source metadata into public demo assets.
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(data: nil, width: image.width, height: image.height,
-                  bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
-                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        guard let result = context.makeImage() else { throw CocoaError(.fileWriteUnknown) }
-        return result
-    }
 }

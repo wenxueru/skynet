@@ -24,22 +24,7 @@ struct AttachmentStripView: View {
 
     private func attachmentTile(_ attachment: ImageAttachment) -> some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let image = UIImage(data: attachment.data) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.15))
-                        .overlay {
-                            Image(systemName: "photo")
-                                .foregroundStyle(Color.secondary)
-                        }
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            AttachmentImageView(attachment: attachment, size: 56)
 
             Button {
                 onRemove(attachment.id)
@@ -47,8 +32,9 @@ struct AttachmentStripView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.subheadline)
                     .foregroundStyle(.white, Color.black.opacity(0.65))
+                    .frame(width: 44, height: 44)
             }
-            .offset(x: 7, y: -7)
+            .buttonStyle(.plain)
             .accessibilityLabel("Remove attachment \(attachment.fileName)")
             .accessibilityIdentifier(A11yID.Composer.attachmentRemove(attachment.id))
         }

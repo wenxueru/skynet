@@ -20,6 +20,7 @@ struct LibraryListContent: View {
                 orphanedSection(machineID)
             }
         }
+        .listStyle(.insetGrouped)
         .confirmationDialog(
             "Forget this Mac?",
             isPresented: Binding(
@@ -101,18 +102,17 @@ struct LibraryListContent: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: Theme.Spacing.sm) {
-                        Text(project.name)
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(.primary)
-                        if let branch = project.gitBranch {
-                            BadgeView(branch, tint: Theme.accent, systemImage: "arrow.triangle.branch")
-                        }
-                    }
-                    Text(project.contextLabel)
+                    Text(project.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(project.displayPath)
                         .font(.caption)
                         .foregroundStyle(Color.secondary)
                         .lineLimit(1)
+                    if let branch = project.gitBranch {
+                        BadgeView(branch, tint: Theme.accent, systemImage: "arrow.triangle.branch")
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -122,7 +122,12 @@ struct LibraryListContent: View {
                         .font(.caption)
                         .foregroundStyle(Color.secondary)
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
+            .padding(.vertical, Theme.Spacing.xs)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -141,25 +146,21 @@ struct MachineSectionHeader: View {
     let machine: Machine
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            Image(systemName: "desktopcomputer")
-                .foregroundStyle(Color.secondary)
-                .accessibilityHidden(true)
-            Text(machine.displayName)
-                .font(.footnote.weight(.semibold))
-            StatusDotView(
-                color: machine.status.isOnline ? Theme.success : Color.secondary,
-                isPulsing: machine.status.isOnline
-            )
-            Text(machine.status.isOnline ? "Online" : "Offline")
-                .font(.caption2)
-                .foregroundStyle(Color.secondary)
-            Spacer()
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack(spacing: Theme.Spacing.sm) {
+                Label(machine.displayName, systemImage: "desktopcomputer")
+                    .font(.footnote.weight(.semibold))
+                Spacer(minLength: 0)
+                StatusDotView(color: machine.status.isOnline ? Theme.success : Color.secondary)
+                Text(machine.status.isOnline ? "Online" : "Offline")
+                    .font(.caption)
+            }
             Text("\(machine.modelDescription) · \(machine.osVersion)")
                 .font(.caption2)
                 .foregroundStyle(Color.secondary)
                 .lineLimit(1)
         }
+        .textCase(nil)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(machine.displayName), \(machine.status.isOnline ? "online" : "offline")"

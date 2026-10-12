@@ -25,55 +25,43 @@ public enum Theme {
 
     // MARK: Colors
 
-    /// App accent — a neutral teal that stays legible in both appearances.
-    public static let accent = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.35, green: 0.78, blue: 0.76, alpha: 1)
-            : UIColor(red: 0.05, green: 0.47, blue: 0.45, alpha: 1)
-    })
+    /// Shared blue accent, with contrast tuned for each appearance.
+    public static let accent = adaptiveColor(
+        light: UIColor(red: 0.10, green: 0.36, blue: 0.78, alpha: 1),
+        dark: UIColor(red: 0.40, green: 0.66, blue: 1.0, alpha: 1))
 
-    public static let success = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.42, green: 0.80, blue: 0.48, alpha: 1)
-            : UIColor(red: 0.13, green: 0.55, blue: 0.28, alpha: 1)
-    })
+    public static let success = adaptiveColor(
+        light: UIColor(red: 0.13, green: 0.55, blue: 0.28, alpha: 1),
+        dark: UIColor(red: 0.42, green: 0.80, blue: 0.48, alpha: 1))
 
-    public static let warning = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.95, green: 0.76, blue: 0.31, alpha: 1)
-            : UIColor(red: 0.72, green: 0.51, blue: 0.05, alpha: 1)
-    })
+    public static let warning = adaptiveColor(
+        light: UIColor(red: 0.72, green: 0.51, blue: 0.05, alpha: 1),
+        dark: UIColor(red: 0.95, green: 0.76, blue: 0.31, alpha: 1))
 
-    public static let danger = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.96, green: 0.51, blue: 0.48, alpha: 1)
-            : UIColor(red: 0.75, green: 0.19, blue: 0.17, alpha: 1)
-    })
+    public static let danger = adaptiveColor(
+        light: UIColor(red: 0.75, green: 0.19, blue: 0.17, alpha: 1),
+        dark: UIColor(red: 0.96, green: 0.51, blue: 0.48, alpha: 1))
 
     /// Bubble backgrounds for chat rows.
-    public static let userBubble = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.16, green: 0.21, blue: 0.23, alpha: 1)
-            : UIColor(red: 0.88, green: 0.93, blue: 0.93, alpha: 1)
-    })
+    public static let userBubble = adaptiveColor(
+        light: UIColor(red: 0.89, green: 0.94, blue: 1.0, alpha: 1),
+        dark: UIColor(red: 0.12, green: 0.22, blue: 0.37, alpha: 1))
 
-    public static let assistantBubble = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1)
-            : UIColor(red: 0.95, green: 0.95, blue: 0.96, alpha: 1)
-    })
+    public static let assistantBubble = adaptiveColor(
+        light: UIColor(red: 0.95, green: 0.95, blue: 0.96, alpha: 1),
+        dark: UIColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1))
 
-    public static let toolCallBackground = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1)
-            : UIColor(red: 0.965, green: 0.965, blue: 0.97, alpha: 1)
-    })
+    public static let toolCallBackground = adaptiveColor(
+        light: UIColor(red: 0.965, green: 0.965, blue: 0.97, alpha: 1),
+        dark: UIColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1))
 
-    public static let codeBackground = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1)
-            : UIColor(red: 0.93, green: 0.94, blue: 0.95, alpha: 1)
-    })
+    public static let codeBackground = adaptiveColor(
+        light: UIColor(red: 0.93, green: 0.94, blue: 0.95, alpha: 1),
+        dark: UIColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1))
+
+    private static func adaptiveColor(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
 
     // MARK: Typography
 

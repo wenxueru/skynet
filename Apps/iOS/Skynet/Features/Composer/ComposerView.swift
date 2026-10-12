@@ -8,6 +8,7 @@ import SwiftUI
 struct ComposerView: View {
     @Bindable var model: ComposerViewModel
     @FocusState private var isInputFocused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(spacing: Theme.Spacing.xs) {
@@ -21,8 +22,7 @@ struct ComposerView: View {
             inputRow
         }
         .padding(.horizontal, Theme.Spacing.md)
-        .padding(.top, Theme.Spacing.xs)
-        .padding(.bottom, Theme.Spacing.xs)
+        .padding(.vertical, Theme.Spacing.sm)
         .background(.bar)
         .overlay(alignment: .top) {
             Divider().opacity(0.4)
@@ -46,11 +46,14 @@ struct ComposerView: View {
 
     private var controlsRow: some View {
         HStack(spacing: Theme.Spacing.sm) {
-            modelMenu
-            effortMenu
-            permissionMenu
-
-            Spacer(minLength: Theme.Spacing.sm)
+            ScrollView(.horizontal) {
+                HStack(spacing: Theme.Spacing.sm) {
+                    modelMenu
+                    effortMenu
+                    permissionMenu
+                }
+            }
+            .scrollIndicators(.hidden)
 
             PhotoAttachmentPicker(
                 canAttachMore: model.canAttachMore,
@@ -65,7 +68,7 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: "camera")
                         .font(.body)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                 }
                 .disabled(!model.canAttachMore)
                 .accessibilityLabel("Take a photo")
@@ -172,7 +175,7 @@ struct ComposerView: View {
                 .lineLimit(1)
         }
         .padding(.horizontal, Theme.Spacing.sm)
-        .padding(.vertical, 6)
+        .frame(minHeight: 44)
         .background(Capsule().fill(Color.secondary.opacity(0.12)))
         .contentShape(Capsule())
     }
@@ -186,8 +189,8 @@ struct ComposerView: View {
                 text: $model.draftText,
                 axis: .vertical
             )
-            .lineLimit(1...6)
-            .padding(Theme.Spacing.sm)
+            .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 3 : 6))
+            .padding(Theme.Spacing.md)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.lg)
                     .fill(Color(.secondarySystemGroupedBackground))
@@ -210,7 +213,7 @@ struct ComposerView: View {
             Image(systemName: model.sendButtonImage)
                 .font(.title2)
                 .foregroundStyle(sendButtonTint)
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .overlay(alignment: .topTrailing) {
                     if model.sendAction == .queue {
                         Image(systemName: "tray.full.fill")

@@ -160,6 +160,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     TextField("Search sessions", text: $model.searchText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Search sessions")
                     Menu {
                         Button("All Machines") { machineFilterID = nil }
                         Divider()
@@ -175,6 +176,7 @@ struct ContentView: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .help("Filter by machine")
+                    .accessibilityLabel("Filter by machine")
                     Button {
                         groupingMode = groupingMode == "project" ? "recent" : "project"
                     } label: {
@@ -202,6 +204,7 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                     .disabled(model.isDiscovering)
                     .help("Refresh machines and sessions")
+                    .accessibilityLabel("Refresh machines and sessions")
                     Menu {
                         Button("Expand All", systemImage: "rectangle.expand.vertical") {
                             expansion.expandAll(machines: model.machines, projects: model.projects)
@@ -215,6 +218,7 @@ struct ContentView: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .help("Expand or collapse all")
+                    .accessibilityLabel("Expand or collapse all")
 
                     Spacer(minLength: 8)
 
@@ -228,16 +232,19 @@ struct ContentView: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .help("New session")
+                    .accessibilityLabel("New session")
                     Button { isImporterPresented = true } label: {
                         SidebarActionIcon(systemName: "folder.badge.plus")
                     }
                     .buttonStyle(.plain)
                     .help("New project")
+                    .accessibilityLabel("New project")
                     Button { openSettings() } label: {
                         SidebarActionIcon(systemName: "gearshape")
                     }
                     .buttonStyle(.plain)
                     .help("Settings")
+                    .accessibilityLabel("Settings")
                 }
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -276,6 +283,7 @@ struct ContentView: View {
                             Text(machine.name).fontWeight(.semibold)
                         }
                         .help(machineStatusDescription(machine))
+                        .accessibilityValue(machineStatusDescription(machine))
 
                         if expansion.contains(machine.id) {
                             ForEach(projectsByMachine[machine.id, default: []]) { project in
@@ -290,7 +298,7 @@ struct ContentView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack(spacing: 4) {
                                             Text(project.name)
-                                                .font(.headline)
+                                                .font(.subheadline.weight(.semibold))
                                                 .lineLimit(1)
                                             if project.metadata["pinned"] == "true" {
                                                 Image(systemName: "pin.fill")
@@ -676,19 +684,23 @@ private struct SessionSidebarRow: View {
                 Text(context ?? (session.providerID == .codex ? "Codex" : "Claude"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 Text(relativeTime(to: context.date))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .fixedSize()
             }
             if session.markedUnreadAt != nil {
                 Circle().fill(Color.accentColor).frame(width: 6, height: 6)
                     .accessibilityLabel("Unread")
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
     }
 
     private func relativeTime(to now: Date) -> String {

@@ -16,15 +16,18 @@ struct SessionView: View {
     private let environment: AppEnvironment
 
     init(session: AgentSession, environment: AppEnvironment) {
-        self.environment = environment
-        let sessionModel = SessionViewModel(
+        self.init(model: SessionViewModel(
             session: session,
             relay: environment.relay,
             monitor: environment.monitor,
             notifications: environment.notifications,
             liveActivities: environment.liveActivities,
             activityState: environment.activityState
-        )
+        ), environment: environment)
+    }
+
+    init(model sessionModel: SessionViewModel, environment: AppEnvironment) {
+        self.environment = environment
         _model = State(initialValue: sessionModel)
         _composerModel = State(initialValue: ComposerViewModel(state: sessionModel))
     }
@@ -64,7 +67,8 @@ struct SessionView: View {
                 search: search,
                 onPermissionDecision: { record, decision in
                     Task { await model.resolve(record, decision: decision) }
-                }
+                },
+                isLoading: model.isLoadingSnapshot
             )
             .overlay(alignment: .bottom) {
                 if model.isCanceling {
@@ -72,10 +76,19 @@ struct SessionView: View {
                         .padding(.bottom, Theme.Spacing.sm)
                 }
             }
-
-            QueuedPromptsBar(state: model, onOpenQueue: { isQueueSheetPresented = true })
-
-            ComposerView(model: composerModel)
+            .overlay {
+                if model.isLoadingSnapshot && model.items.isEmpty {
+                    ProgressView("Loading conversation…")
+                        .padding(Theme.Spacing.lg)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                QueuedPromptsBar(state: model, onOpenQueue: { isQueueSheetPresented = true })
+                ComposerView(model: composerModel)
+            }
         }
         .navigationTitle(model.currentSession.title)
         .navigationBarTitleDisplayMode(.inline)

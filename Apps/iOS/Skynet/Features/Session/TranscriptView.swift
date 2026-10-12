@@ -10,6 +10,7 @@ struct TranscriptView: View {
     var search: TranscriptSearch? = nil
     var onPermissionDecision: ((PermissionRequestRecord, PermissionDecision) -> Void)? = nil
     var isStreaming = false
+    var isLoading = false
 
     private static let bottomAnchor = "transcript-bottom-anchor"
 
@@ -48,7 +49,7 @@ struct TranscriptView: View {
                                 .font(.footnote)
                                 .foregroundStyle(Color.secondary)
                                 .padding(.top, Theme.Spacing.xl)
-                        } else {
+                        } else if !isLoading {
                             EmptyStateView(
                                 systemImage: "bubble.left.and.text.bubble.right",
                                 title: "No messages yet",
@@ -65,11 +66,14 @@ struct TranscriptView: View {
                         .onAppear { isAtBottom = true }
                         .onDisappear { isAtBottom = false }
                 }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.md)
                 .padding(.bottom, Theme.Spacing.lg)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
             .overlay(alignment: .bottomTrailing) {
                 if !isAtBottom && !isSearching {
                     JumpToBottomButton(unreadCount: 0) {

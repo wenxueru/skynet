@@ -20,11 +20,11 @@ struct PhotoAttachmentPicker: View {
             if isLoading {
                 ProgressView()
                     .controlSize(.small)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
             } else {
                 Image(systemName: "photo.on.rectangle")
                     .font(.body)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
             }
         }
         .disabled(!canAttachMore || isLoading)
